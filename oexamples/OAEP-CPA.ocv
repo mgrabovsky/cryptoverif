@@ -1,0 +1,139 @@
+(*************************************************************
+ *                                                           *
+ *       Cryptographic protocol verifier                     *
+ *                                                           *
+ *       Bruno Blanchet and David Cadé                       *
+ *                                                           *
+ *       Copyright (C) ENS, CNRS, INRIA, 2005-2014           *
+ *                                                           *
+ *************************************************************)
+
+(*
+
+    Copyright ENS, CNRS, INRIA 
+    contributors: Bruno Blanchet, Bruno.Blanchet@inria.fr
+                  David Cadé
+
+This software is a computer program whose purpose is to verify 
+cryptographic protocols in the computational model.
+
+This software is governed by the CeCILL-B license under French law and
+abiding by the rules of distribution of free software.  You can  use, 
+modify and/ or redistribute the software under the terms of the CeCILL-B
+license as circulated by CEA, CNRS and INRIA at the following URL
+"http://www.cecill.info". 
+
+As a counterpart to the access to the source code and  rights to copy,
+modify and redistribute granted by the license, users are provided only
+with a limited warranty  and the software's author,  the holder of the
+economic rights,  and the successive licensors  have only  limited
+liability. 
+
+In this respect, the user's attention is drawn to the risks associated
+with loading,  using,  modifying and/or developing or reproducing the
+software by the user in light of its specific status of free software,
+that may mean  that it is complicated to manipulate,  and  that  also
+therefore means  that it is reserved for developers  and  experienced
+professionals having in-depth computer knowledge. Users are therefore
+encouraged to load and test the software's suitability as regards their
+requirements in conditions enabling the security of their systems and/or 
+data to be ensured and,  more generally, to use and operate it in the 
+same conditions as regards security. 
+
+The fact that you are presently reading this means that you have had
+knowledge of the CeCILL-B license and that you accept its terms.
+
+*)
+(* OAEP scheme, proof of CPA security *)
+
+proof {
+      crypto rom(H);
+      crypto rom(G);
+      show_game occ;
+      insert_event bad1 32;
+      show_game occ;
+      insert_event bad2 60;
+      crypto remove_xor(xorDr) "@10_r_129";
+      crypto remove_xor(xorDow) "@9_r_137";      
+      remove_assign binder pk;
+      crypto pd_ow(f) "r_107" "@9_r_150" "@10_r_144";
+      success
+}
+
+param qS.
+
+type pkey [bounded].
+type skey [bounded].
+type seed [large,fixed].
+type D [fixed,large].
+type Dow [fixed,large].
+type Dr [fixed,large].
+
+(* Set partial-domain one-way trapdoor permutation *)
+
+proba P_PD_OW.
+
+expand set_PD_OW_trapdoor_perm(seed, pkey, skey, D, Dow, Dr, pkgen, skgen, f, invf, concat, P_PD_OW).
+
+(* Hash functions, random oracle model *)
+
+type hashkey [fixed].
+
+expand ROM_hash(hashkey, Dr, Dow, G).
+param qG [noninteractive].
+let hashoracleG = foreach iG <= qG do OG(x:Dr) := return(G(hkg,x)).
+
+expand ROM_hash(hashkey, Dow, Dr, H).
+param qH [noninteractive].
+let hashoracleH = foreach iH <= qH do OH(x:Dow) := return(H(hkh,x)).
+
+(* concatenation *)
+type Dm.
+type Dz [large].
+
+fun concatm(Dm,Dz):Dow [compos].
+const zero: Dz.
+
+(* Xor *)
+
+expand Xor(Dow, xorDow, zeroDow).
+expand Xor(Dr, xorDr, zeroDr).
+
+(* Implementing a test as a function.
+   Useful to avoid expanding if, which is necessary for this proof. *)
+
+fun test(bool, Dm, Dm):Dm.
+forall x:Dm,y:Dm; test(true,x,y) = x.
+forall x:Dm,y:Dm; test(false,x,y) = y.
+
+(* Queries *)
+
+query secret1 b1.
+
+let processT = 
+	OT(m1: Dm, m2: Dm) :=
+	b1 <-R bool;
+	(* The next line is equivalent to an "if" that will not be
+	expanded. This is necessary for the system to succeed in
+	proving the protocol. *)
+	menc <- test(b1, m1, m2);
+	r <-R Dr;
+	s <- xorDow(concatm(menc, zero), G(hkg,r));
+	t <- xorDr(r, H(hkh,s));
+	return(f(pk, concat(s,t))).
+
+process 
+	Ogen() :=
+	hkh <-R hashkey;
+	hkg <-R hashkey;
+	r <-R seed; 
+	pk <- pkgen(r);
+	sk <- skgen(r);
+	return(pk);
+	(hashoracleG | hashoracleH | processT)
+
+
+(* EXPECTED
+All queries proved.
+0.030s (user 0.030s + system 0.000s), max rss 19856K
+END *)

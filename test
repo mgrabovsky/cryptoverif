@@ -1,0 +1,129 @@
+#!/bin/bash
+
+if [ -x ./xtime ]
+then
+    PROG=./xtime
+else
+    PROG=
+fi
+
+# The arguments of analyze are
+# $1 = protocol name
+# $2 = CryptoVerif options
+# $3 = input filename (wrt the CryptoVerif directory)
+# $4 = output filename (wrt the CryptoVerif directory)
+
+function analyze()
+{
+	echo -n PROTOCOL $1 " "
+	$PROG ./cryptoverif $2 $3 > tmp.out 2>&1 
+	echo PROTOCOL $1 >> $4
+	cat tmp.out >> $4
+	egrep \(PROTOCOL\|'RESULT Could not prove'\|'All queries proved'\|xtime\|Error\|user\) tmp.out > tmp.res 
+	awk '/EXPECTED/, /END/ { print $0; }' $3 | grep -v EXPECTED | grep -v END > tmp.expected
+	grep -v user tmp.expected > tmp.expectedres
+	grep -v user tmp.res > tmp.actualres
+	if diff -q -b tmp.expectedres tmp.actualres >/dev/null
+	then 
+	    echo OK
+	else
+	    echo
+	    echo RESULTS DIFFER! Expected:
+	    cat  tmp.expectedres
+	    echo Actual:
+	    cat tmp.actualres
+	fi
+	(echo -n "EXPECTED: "; grep user tmp.expected ; echo -n "ACTUAL: "; grep user tmp.res) | awk '/^EXPECTED:/ { expectedtime = substr($2, 0, length($2)-1); } /^ACTUAL:/ { actualtime = substr($2, 0, length($2)-1); } END { if (actualtime != "") { if (actualtime + 0 > expectedtime * 1.2 + 0.2) { print "Slower: old=" expectedtime " new=" actualtime}; if (actualtime + 0 < expectedtime * 0.8 - 0.2) { print "Faster: old=" expectedtime " new=" actualtime; } } }'
+}
+
+
+echo
+echo TEST
+echo
+output=test`date '+%Y.%m.%d-%H_%M_%S'`
+(
+for i in otway-rees2Stream otway-rees2StreamTag otway-rees3Stream otway-rees3StreamTag otway-rees2Block otway-rees2BlockTag otway-rees3Block otway-rees3BlockTag yahalom3Stream yahalom3StreamMod yahalom3StreamMac needham-schroeder-sk3Stream needham-schroeder-skcorr3Stream needham-schroeder-skcorr3StreamAuth2 fdh fdh-JSC pfdh woolamsk woolamskcorr woolamskcorr_tbl denning-sacco3Block denning-sacco-corr3Block needham-schroeder-pk3Block needham-schroeder-pk3BlockHash needham-schroeder-pkcorr3Block needham-schroeder-pkcorr3BlockHash needham-schroeder-pk3BlockAuth needham-schroeder-pkcorr3BlockAuth encryptBR93-1 woolampk woolampkcorr woolamskcorrBlock encryptBR93-2 encryptBR93-2v denning-sacco-corr3Block-auto needham-schroeder-pkcorr3BlockHash-auto wmf-tagged wmf-tagged-payload signedDH signedDH-DDH signedDH-DDH-auto signedDH-forward-secrecy
+do
+	analyze $i "" examples/$i.cv tests/$output
+done
+) | tee tests/res-$output
+egrep \(PROTOCOL\|RESULT\|user\) tests/$output > tests/sum-$output
+
+
+echo
+echo AUTHTEST
+echo
+output=auth`date '+%Y.%m.%d-%H_%M_%S'`
+(for i in otway-rees3Stream yahalom3Stream yahalom3StreamMod yahalom3StreamMac needham-schroeder-sk3Stream needham-schroeder-sk3StreamAuth needham-schroeder-sk3StreamFull needham-schroeder-skcorr3Stream needham-schroeder-skcorr3StreamAuth needham-schroeder-skcorr3StreamFull woolamsk woolamskcorr denning-sacco3Block denning-sacco-corr3Block needham-schroeder-pk3BlockAuth needham-schroeder-pkcorr3BlockAuth needham-schroeder-pkcorr3BlockKeyNa needham-schroeder-pkcorr3BlockKeyNb needham-schroeder-pkcorr3BlockKeyHash woolampk woolampkcorr woolampkWeaksign woolampkWeaksign-corr woolamskcorrBlock
+do
+	analyze $i "" authexamples/$i.cv tests/$output
+done
+) | tee tests/res-$output
+egrep \(PROTOCOL\|RESULT\|user\) tests/$output > tests/sum-$output
+
+
+echo
+echo OTEST
+echo
+output=otest`date '+%Y.%m.%d-%H_%M_%S'`
+(
+for i in fdh.ocv fdh-JSC.ocv encryptBR93-1.ocv encryptBR93-2.ocv encryptBR93-2v.ocv signedDH.ocv  signedDH-DDH.ocv OEKE.ocv OAEP-CPA.ocv
+do
+    analyze $i "-in oracles" oexamples/$i tests/$output
+done
+) | tee tests/res-$output
+egrep \(PROTOCOL\|RESULT\|user\) tests/$output > tests/sum-$output
+
+
+if [ -d ../../dev/web/webperso/cryptoverif/kerberos ]
+then
+echo
+echo WEB
+echo
+output=web`date '+%Y.%m.%d-%H_%M_%S'`
+(
+for i in ../../dev/web/webperso/cryptoverif/kerberos/*.cv
+do
+	analyze $i "" $i tests/$output
+done
+) | tee tests/res-$output
+egrep \(PROTOCOL\|RESULT\|user\) tests/$output > tests/sum-$output
+fi
+
+
+if [ -d examplesnd ]
+then
+echo
+echo NDTEST
+echo
+output=ndtest`date '+%Y.%m.%d-%H_%M_%S'`
+rm examplesnd/test/*~ examplesnd/kerberos/*~ examplesnd/otest/*~
+(
+echo
+echo CHANNELS FRONTEND
+echo
+
+for i in examplesnd/test/* examplesnd/kerberos/*
+do
+    if [ -f $i ]
+    then
+	analyze $i "" $i tests/$output
+    fi
+done
+
+echo
+echo ORACLES FRONTEND
+echo
+
+for i in examplesnd/otest/*
+do
+    if [ -f $i ]
+    then
+	analyze $i "-in oracles" $i tests/$output
+    fi
+done
+) | tee tests/res-$output
+egrep \(PROTOCOL\|RESULT\|user\) tests/$output > tests/sum-$output
+fi
+
+rm tmp.*

@@ -1,0 +1,43 @@
+This directory contains an implementation of the corrected Woo-Lam
+shared-key authentication protocol.
+
+build.sh: the script that proves the protocol using CryptoVerif and
+compiles everything.
+
+woolamskcorr_tbl.ocv: the CryptoVerif specification of the protocol.
+It defines several modules:
+- WLSK_S: the server
+- WLSK_keygen: generates long-term shared keys between one participant
+and the server. The keys are inserted in the table "keytbl"
+and saved into the files wlsk_enc_key for the encryption key, wlsk_mac_key
+for the MAC key; the identity of the participant is saved into wlsk_id.
+- WLSK_Init: role of the initiator
+- WLSK_Resp: role of the responder
+Each of these modules will produce an associated .ml and .mli
+file when CryptoVerif generates the implementation.
+
+The following .ml files are manually written. They use the modules
+mentioned above.
+- keygen.ml: generates long-term shared keys between one participant
+and the server, uses WLSK_keygen.
+- server.ml: the server, uses WLSK_S.
+- init.ml: role of the initiator, uses WLSK_Init.
+- resp.ml: role of the responder, uses WLSK_Resp.
+
+After compiling everything by build.sh, you can run this protocol
+as follows:
+1) Generate keys for all participants, by running keygen on each
+machine.
+2) If everything is not on the same machine, concatenate the "keytbl" files
+on all the machines into the "keytbl" file on the server,
+so that the server has the table of all keys.
+3) Launch the server, by running "server"
+4) For each responder you want to run, launch "resp <name of the server machine>"
+5) For each session of the protocol you want to run, launch 
+"init <name of the responder machine for that session>"
+
+The programs display messages to show their progress.
+Note that you may have to wait a bit before a program is really
+launched: it needs to initialize a random number generator.
+The error treatment in this simple example is quite rough: the
+exceptions generally reach the toplevel.

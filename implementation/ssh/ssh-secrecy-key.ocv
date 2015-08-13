@@ -1,0 +1,311 @@
+(*************************************************************
+ *                                                           *
+ *       Cryptographic protocol verifier                     *
+ *                                                           *
+ *       Bruno Blanchet and David Cadé                       *
+ *                                                           *
+ *       Copyright (C) ENS, CNRS, INRIA, 2005-2014           *
+ *                                                           *
+ *************************************************************)
+
+(*
+
+    Copyright ENS, CNRS, INRIA 
+    contributors: Bruno Blanchet, Bruno.Blanchet@inria.fr
+                  David Cadé
+
+This software is a computer program whose purpose is to verify 
+cryptographic protocols in the computational model.
+
+This software is governed by the CeCILL-B license under French law and
+abiding by the rules of distribution of free software.  You can  use, 
+modify and/ or redistribute the software under the terms of the CeCILL-B
+license as circulated by CEA, CNRS and INRIA at the following URL
+"http://www.cecill.info". 
+
+As a counterpart to the access to the source code and  rights to copy,
+modify and redistribute granted by the license, users are provided only
+with a limited warranty  and the software's author,  the holder of the
+economic rights,  and the successive licensors  have only  limited
+liability. 
+
+In this respect, the user's attention is drawn to the risks associated
+with loading,  using,  modifying and/or developing or reproducing the
+software by the user in light of its specific status of free software,
+that may mean  that it is complicated to manipulate,  and  that  also
+therefore means  that it is reserved for developers  and  experienced
+professionals having in-depth computer knowledge. Users are therefore
+encouraged to load and test the software's suitability as regards their
+requirements in conditions enabling the security of their systems and/or 
+data to be ensured and,  more generally, to use and operate it in the 
+same conditions as regards security. 
+
+The fact that you are presently reading this means that you have had
+knowledge of the CeCILL-B license and that you accept its terms.
+
+*)
+set mergeBranches = false.
+
+proof {
+      success;
+      (*prove authentication*)
+      show_game occ;
+      insert 415 "let concat8(a1, a2, a3, a4, a5, a6, a7, a8) = hx in"; (* in OH, at the beginning *)
+      show_game occ;
+      insert 425 "let concat4(b1, b2, b3, b4) = hx in"; (* in the else branch of the "let" inserted above *) 
+      crypto rom(h);
+      crypto uf_cma(signr);
+      success;
+
+      (*secrecy of the key*)
+      show_game occ;
+      insert 218 "find w <= N suchthat defined(idCS[w], idSS[w], cookieCS[w], nsCS[w], cookieSS[w], eS[w], fS[w], @22_r_397[w]) && ((idCC = idCS[w]) && ((idSC = idSS[w]) && (((cookieCC = cookieCS[w]) && (negotiation_string = nsCS[w])) && (((cookieSC = cookieSS[w]) && (nsSC = negotiation_string)) && ((eC = eS[w]) && ((fC = fS[w]))))))) then";
+       insert 53 "find v <= N suchthat defined (eC[v]) && eC[v]=eS then";
+      simplify;
+      set elsefindFactsInSimplify = true; (* Already true by default; I keep this in case the default changes *)
+      crypto cdh(exp);
+      crypto hash_to_symkey_random;
+      crypto hash_to_symkey_random;
+      crypto hash_to_iv_random;
+      crypto hash_to_iv_random;    
+      crypto hash_to_mackey_random;
+      crypto hash_to_mackey_random;  
+      success
+}
+
+param N.
+
+type pad_rand [fixed]. (*size 255 bytes or less depending on how the padding is done*)
+type cookie [fixed, large]. (* 16 bytes *)
+type tag [bounded]. (* 1 byte *)
+type uint32 [bounded]. (* 4 bytes *)
+type D [fixed].
+type hashkey [bounded].
+type hash [fixed, large].
+type signature [bounded].
+type block [fixed].
+type sseed [fixed].
+type skeyseed [large, fixed].
+type sskey [bounded, large].
+type spkey [bounded, large].
+type mkeyseed [fixed].
+type mkey [bounded, large].
+type macinput [bounded].
+type macres [large].
+type iv [fixed, large].
+type symkey [fixed, large].
+
+fun skp(spkey,sskey): bitstring [compos].
+
+type Z [large, bounded]. (*mpint = ssh string (size+string payload). MSB. 8 bits per byte. where 0=empty string, >0=first bit=0, <0=first bit=1,at beginning no useless 00 or FF. *)
+type G [large, bounded]. (*mpint*)
+
+fun bitstring_of_G(G): bitstring [compos].
+
+fun padr(bitstring,pad_rand): bitstring.
+letfun pad(m:bitstring) = r <-R pad_rand; padr(m, r).
+fun unpad(bitstring): bitstringbot.
+
+fun injbot(bitstring): bitstringbot [compos].
+forall x: bitstring; injbot (x) <> bottom.
+forall x: bitstring, r: pad_rand;
+       unpad(padr(x, r)) = injbot(x).
+
+(* utils *)
+
+fun get_size(bitstring): uint32.
+
+fun concatm(tag, bitstring): bitstring [compos].
+fun concatKEXINIT(cookie, bitstring): bitstring [compos].
+fun concat8(bitstring, bitstring, bitstring, bitstring, spkey, G, G, G): bitstring [compos].
+fun concatKEXDHREPLY(spkey, G, signature): bitstring [compos].
+fun concat(bitstring, bitstring): bitstring.
+fun check_algorithms(bitstring): bool.
+fun block_of_hash(hash): block [compos].
+
+const negotiation_string: bitstring.
+const tag_kexdh_init: tag.
+const tag_kexdh_reply: tag.
+const tag_kex_init: tag.
+const tag_newkeys: tag.
+const uint32_zero: uint32.
+const null_string: bitstring. (*the string of length 0 *)
+
+(*CDH*)
+
+proba pCDH.
+
+expand CDH(G, Z, g, exp, mult, pCDH).
+
+letfun message(x: Z) = exp(g, x).
+
+(*hash function *)
+
+param qH [noninteractive].
+
+expand ROM_hash(hashkey, bitstring, hash, h).
+
+let processH = foreach iH <= qH do
+    OH(hx: bitstring) := return (h(hk, hx)).
+
+(* signature *)
+
+proba Psign.
+proba Psigncoll.
+
+expand UF_CMA_signature(skeyseed, spkey, sskey, block, signature, sseed, sskgen, spkgen, signr, check, Psign, Psigncoll).
+
+letfun kgen_s () = r <-R skeyseed; skp(spkgen(r), sskgen(r)).
+
+letfun sign(m: block, sk: sskey) = r <-R sseed; signr(m, sk, r).
+
+(* utils *)
+
+const tag_IVC: tag.
+const tag_IVS: tag.
+const tag_EKC: tag.
+const tag_EKS: tag.
+const tag_MKC: tag.
+const tag_MKS: tag.
+
+fun iv_of_hash (hash): iv.
+fun symkey_of_hash (hash): symkey.
+fun mkey_of_hash (hash): mkey.
+
+fun concat4(G, hash, tag, hash): bitstring [compos].
+letfun gen(hk:hashkey, k:G, h1:hash, c:tag, h2:hash) = h(hk, concat4(k, h1, c, h2)).
+letfun genIVC(hk:hashkey, k:G, h1:hash, h2:hash) = iv_of_hash(gen(hk, k, h1, tag_IVC, h2)).
+letfun genIVS(hk:hashkey, k:G, h1:hash, h2:hash) = iv_of_hash(gen(hk, k, h1, tag_IVS, h2)).
+letfun genEKC(hk:hashkey, k:G, h1:hash, h2:hash) = symkey_of_hash(gen(hk, k, h1, tag_EKC, h2)).
+letfun genEKS(hk:hashkey, k:G, h1:hash, h2:hash) = symkey_of_hash(gen(hk, k, h1, tag_EKS, h2)).
+letfun genMKC(hk:hashkey, k:G, h1:hash, h2:hash) = mkey_of_hash(gen(hk, k, h1, tag_MKC, h2)).
+letfun genMKS(hk:hashkey, k:G, h1:hash, h2:hash) = mkey_of_hash(gen(hk, k, h1, tag_MKS, h2)).
+
+forall k: G, h1: hash, c: tag, h2: hash, x1: bitstring, x2: bitstring, x3: bitstring, x4: bitstring, x5: spkey, x6: G, x7: G, x8: G;
+   concat4(k, h1, c, h2) <> concat8(x1, x2, x3, x4, x5, x6, x7, x8).
+
+param Nsr.
+equiv hash_to_iv_random
+      foreach i <= Nsr do h <-R hash; O() := return (iv_of_hash (h))
+        <=(0)=> 
+      foreach i <= Nsr do s <-R iv; O() := return (s).
+
+equiv hash_to_symkey_random 
+      foreach i <= Nsr do h <-R hash; O() := return (symkey_of_hash (h))
+        <=(0)=> 
+      foreach i <= Nsr do s <-R symkey; O() := return (s).
+
+equiv hash_to_mackey_random 
+      foreach i <= Nsr do h <-R hash; O() := return (mkey_of_hash (h))
+        <=(0)=> 
+      foreach i <= Nsr do s <-R mkey; O() := return (s).
+
+(* key table *)
+
+table trusted_hosts(spkey).
+
+(* Secret *)
+query secret IVCC.
+query secret IVSC.
+query secret EKCC.
+query secret EKSC.
+query secret MKCC.
+query secret MKSC.
+
+(* Authentication property *)
+
+event endC(bitstring, bitstring, bitstring, bitstring, spkey, G, G, G, hash).
+event endS(bitstring, bitstring, bitstring, bitstring, spkey, G, G, G, hash).
+
+query idC: bitstring, idS: bitstring, initC: bitstring, initS: bitstring, pk: spkey, x: G, y: G, K: G, H: hash; event inj: endC(idC, idS, initC, initS, pk, x, y, K, H) ==> inj:endS(idC, idS, initC, initS, pk, x, y, K, H).
+
+query idC: bitstring, idS: bitstring, initC: bitstring, initS: bitstring, pk: spkey, x: G, y: G, K: G, H: hash, K': G, H': hash; event endC(idC, idS, initC, initS, pk, x, y, K, H) && endS(idC, idS, initC, initS, pk, x, y, K', H') ==> K = K' && H = H'.
+
+(* Server *)
+
+let processS =
+SSH_S {
+      negotiationS() :=
+	  (* Returning KEX_INIT to client *)
+          cookieSS <-R cookie;
+          initSS <- concatm(tag_kex_init, concatKEXINIT(cookieSS, negotiation_string));
+          return (pad(initSS));
+
+          key_exchange2S(idCS: bitstring, idSS: bitstring, m1: bitstring, m2: bitstring) :=
+	  (* Expecting KEX_INIT and KEXDH_INIT from client, returning KEXDH_REPLY *)
+          let injbot(initCS) = unpad(m1) in
+          let concatm(=tag_kex_init, concatKEXINIT(cookieCS, nsCS)) = initCS in
+          if (check_algorithms(nsCS)) then
+          let injbot(concatm(=tag_kexdh_init, bitstring_of_G(eS))) = unpad(m2) in
+          yS <-R Z;
+          fS <- message(yS);
+          KS: G <- exp(eS, yS);
+          HS <- h(hk, concat8(idCS, idSS, initCS, initSS, pkS, eS, fS, KS));
+	  event endS(idCS, idSS, initCS, initSS, pkS, eS, fS, KS, HS);
+          sS <- sign(block_of_hash(HS), skS);
+          return (pad(concatm(tag_kexdh_reply, concatKEXDHREPLY(pkS, fS, sS))));
+
+	 key_exchange4S(m: bitstring) :=
+	   (* Expecting NEW_KEYS from client, returning NEW_KEYS *)
+	   let injbot(nkCS) = unpad(m) in
+	   let concatm(=tag_newkeys, =null_string) = nkCS in
+	   return (pad(concatm(tag_newkeys, null_string)));
+
+         get_keysS() :=
+ 	   IVCS <- genIVC(hk,KS,HS,HS);
+ 	   IVSS <- genIVS(hk,KS,HS,HS);
+	   EKCS <- genEKC(hk,KS,HS,HS);
+	   EKSS <- genEKS(hk,KS,HS,HS);
+	   MKCS <- genMKC(hk,KS,HS,HS);
+	   MKSS <- genMKS(hk,KS,HS,HS).
+
+(* Client *)
+
+let processC =
+SSH_C {
+        negotiationC() :=
+	     (* Returning KEX_INIT to the server *)
+             cookieCC <-R cookie;
+             initCC <- concatm(tag_kex_init, concatKEXINIT (cookieCC, negotiation_string));
+             return (pad(initCC));
+        
+        key_exchange1C(m: bitstring) :=
+             (* Expecting KEX_INIT from the server, returning KEXDH_INIT *)
+             let injbot(initSC) = unpad(m) in
+             let concatm(=tag_kex_init, concatKEXINIT(cookieSC, nsSC)) = initSC in
+             if (check_algorithms(initSC)) then
+             xC <-R Z;
+             eC <- message(xC);
+             return (pad(concatm(tag_kexdh_init, bitstring_of_G(eC))));
+
+        key_exchange3C(idCC: bitstring, idSC: bitstring, m: bitstring) :=
+	     (* Expecting KEYDH_REPLY from the server, returning NEW_KEYS *)
+             let injbot(concatm(=tag_kexdh_reply, concatKEXDHREPLY(pkSC, fC, sC))) = unpad(m) in
+             get trusted_hosts(=pkSC) in
+             KC:G <- exp(fC,xC);
+             HC <- h(hk,concat8(idCC, idSC, initCC, initSC, pkSC, eC, fC, KC));
+             if check(block_of_hash(HC),pkSC,sC) then
+             event endC(idCC, idSC, initCC, initSC, pkSC, eC, fC, KC, HC);
+	     return (pad(concatm(tag_newkeys, null_string)));
+	
+	get_keysC(m: bitstring) :=
+	  (* Expecting NEW_KEYS from the server, then start the tunnel *)
+  	  let injbot(nkSC) = unpad(m) in
+	  let concatm(=tag_newkeys, =null_string) = nkSC in
+          IVCC: iv <- genIVC(hk,KC,HC,HC);
+	  IVSC: iv <- genIVS(hk,KC,HC,HC);
+	  EKCC: symkey <- genEKC(hk,KC,HC,HC);
+	  EKSC: symkey <- genEKS(hk,KC,HC,HC);
+	  MKCC: mkey <- genMKC(hk,KC,HC,HC);
+	  MKSC: mkey <- genMKS(hk,KC,HC,HC).
+
+(* Key generation *)
+
+process 
+   SSH_Keygen [ hk > hk, pkS > pkS, skS > skS ] {
+	Ostart() :=
+	hk <-R hashkey;
+        let skp(pkS: spkey,skS: sskey) = kgen_s() in
+        insert trusted_hosts(pkS);
+        return (pkS)};
+        ((foreach iA <= N do processS) | (foreach iB <= N do processC) | processH)

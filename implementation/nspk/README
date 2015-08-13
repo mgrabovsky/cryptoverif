@@ -1,0 +1,46 @@
+This directory contains an implementation of the Needham-Schroeder
+public-key protocol, fixed by Lowe.
+
+build.sh: the script that proves the protocol using CryptoVerif and
+compiles everything.
+
+nspk3tbl.ocv: the CryptoVerif specification of the protocol.
+It defines several modules:
+- ONS_Keygen: generates keys for the certificate server (stored in files pkS and skS)
+- ONS_S: the certificate server
+- ONS_AGenKey: key generation for A (stores the public key in pkA, the secret 
+key in skA, and the identity of A in idA, inserts an entry in table keytbl)
+- ONS_A: role of A
+- ONS_BGenKey: key generation for B (stores the public key in pkB, the secret 
+key in skB, and the identity of B in idB, inserts an entry in table keytbl)
+- ONS_B: role of B
+Each of these modules will produce an associated .ml and .mli
+file when CryptoVerif generates the implementation.
+
+The following .ml files are manually written. They use the modules
+mentioned above.
+- Skeygen.ml: key generation program for the server, uses ONS_Keygen
+- S.ml: the certificate server, uses ONS_S.
+- Akeygen.ml: key generation program for A, uses ONS_AGenKey
+- A.ml: the role of A, uses ONS_A.
+- Bkeygen.ml: key generation program for B, uses ONS_BGenKey
+- B.ml: the role of B, uses ONS_B.
+
+After compiling everything by build.sh, you can run this protocol
+as follows:
+1) Generate keys for all participants: 
+- one for the certicate server by running Skeygen on the desired certicate server machine.
+- one for each A and B by running Akeygen/Bkeygen on each machine.
+2) If everything is not on the same machine, concatenate the "keytbl" files
+on all the machines into the "keytbl" file on the certificate server,
+so that the certificate server has the table of all keys.
+3) Launch the certificate server, by running S
+4) For each B you want to run, launch "B <name of the certificate server machine>"
+5) For each session of the protocol you want to run, launch 
+"A <name of the B machine for that session> <name of the certificate server machine>"
+
+The programs display messages to show their progress.
+Note that you may have to wait a bit before a program is really
+launched: it needs to initialize a random number generator.
+The error treatment in this simple example is quite rough: the
+exceptions generally reach the toplevel.

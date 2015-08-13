@@ -1,0 +1,82 @@
+Compilation:
+============
+
+First, compile cryptoverif, compile cryptokit. 
+
+Running build.sh will then create four programs, described in the next section.
+
+Note: on windows, you need to use the cygwin port of OCaml.
+The Win32 port does not implement some functions needed in the Unix 
+OCaml library.
+
+Generated programs:
+===================
+
+Key generation:
+---------------
+
+./keygen
+It generates pkS and skS, a public/private RSA key pair. It adds it automatically in trusted_hosts (which is read by the client, kind of like .ssh/known_hosts).
+./add_key keyfile
+Adds the key keyfile to trusted_hosts.
+
+Server:
+-------
+
+./server host port username pkey
+Creates a server that listens on host:port (one can use localhost for example and 2222 for these for example), and accepts clients which name themselves as username and have the public key pkey. (It is as if ~username/.ssh/authorized_keys has only this key in it.)
+
+Client:
+-------
+
+./client host port username skey bind_port remote_host remote_port
+It is essentially equivalent to:
+ssh -p port host -N -L bind_port:remote_host:remote_port
+The client will connect to the SSH server on host:port, use the username user and the key skey to authenticate, and then listen to the port bind_port and forward by using SSH to remote_host:remote_port.
+
+An example of use:
+==================
+
+Key management:
+---------------
+
+generate the server key:
+./keygen
+add the ssh host key used by your sshd process (this way, the client will be able to recognize sshd):
+./add_key /etc/ssh/ssh_host_rsa_key.pub
+create a key to use by the client (use an empty passphrase, otherwise our client will not be able to load it):
+ssh-keygen
+add this key to your ssh authorized keys (then the client will be able to connect)
+cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys
+
+Session:
+--------
+
+create a listening server on port 4000:
+on unix: nc -l 127.0.0.1 4000
+on cygwin: nc -l 4000
+
+launch the server:
+./server 127.0.0.1 2222 username ~/.ssh/id_rsa.pub
+
+launch the client to forward connections :
+./client 127.0.0.1 2222 username ~/.ssh/id_rsa 3000 127.0.0.1 4000
+
+then connect to the port 3000:
+nc 127.0.0.1 3000
+
+then write in both "nc".
+
+Interoperability with OpenSSH:
+------------------------------
+
+- Our client with the OpenSSH server:
+      nc -l 127.0.0.1 4000   (or on cygwin: nc -l 4000)
+      ./client 127.0.0.1 22 username ~/.ssh/id_rsa 3000 127.0.0.1 4000
+      nc 127.0.0.1 3000
+
+- Our server with an OpenSSH client:
+      nc -l 127.0.0.1 4000   (or on cygwin: nc -l 4000)
+      ./server 127.0.0.1 2222 username ~/.ssh/id_rsa.pub
+      ssh -p 2222 127.0.0.1 -N -L 3000:localhost:4000
+      nc 127.0.0.1 3000

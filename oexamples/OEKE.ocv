@@ -1,0 +1,214 @@
+(*************************************************************
+ *                                                           *
+ *       Cryptographic protocol verifier                     *
+ *                                                           *
+ *       Bruno Blanchet and David Cadé                       *
+ *                                                           *
+ *       Copyright (C) ENS, CNRS, INRIA, 2005-2014           *
+ *                                                           *
+ *************************************************************)
+
+(*
+
+    Copyright ENS, CNRS, INRIA 
+    contributors: Bruno Blanchet, Bruno.Blanchet@inria.fr
+                  David Cadé
+
+This software is a computer program whose purpose is to verify 
+cryptographic protocols in the computational model.
+
+This software is governed by the CeCILL-B license under French law and
+abiding by the rules of distribution of free software.  You can  use, 
+modify and/ or redistribute the software under the terms of the CeCILL-B
+license as circulated by CEA, CNRS and INRIA at the following URL
+"http://www.cecill.info". 
+
+As a counterpart to the access to the source code and  rights to copy,
+modify and redistribute granted by the license, users are provided only
+with a limited warranty  and the software's author,  the holder of the
+economic rights,  and the successive licensors  have only  limited
+liability. 
+
+In this respect, the user's attention is drawn to the risks associated
+with loading,  using,  modifying and/or developing or reproducing the
+software by the user in light of its specific status of free software,
+that may mean  that it is complicated to manipulate,  and  that  also
+therefore means  that it is reserved for developers  and  experienced
+professionals having in-depth computer knowledge. Users are therefore
+encouraged to load and test the software's suitability as regards their
+requirements in conditions enabling the security of their systems and/or 
+data to be ensured and,  more generally, to use and operate it in the 
+same conditions as regards security. 
+
+The fact that you are presently reading this means that you have had
+knowledge of the CeCILL-B license and that you accept its terms.
+
+*)
+(* One-Encryption Key Exchange *)
+
+(* Proof indications *)
+
+proof {
+set maxIterSimplif = 3;
+show_game occ;
+insert 261 "let concat(x1,x2,x3,x4,x5) = h1x in"; (* just after OH1(..):= *)
+crypto rom(h1);
+show_game occ;
+insert 168 "find j <= NU suchthat defined(X[j]) && X[j] = X_s then"; (* just after OS2(..):= *)
+show_game occ;
+insert 303 "find jh <= qH1 suchthat defined(x1[jh], x2[jh], x3[jh], x4[jh], @12_r_185[jh]) && (U = x1[jh]) && (S = x2[jh]) && (X_s = x3[jh]) && (Y = x4[jh]) && (auth_s = @12_r_185[jh]) then"; (* beginning of the "else" branch of the just inserted find *)
+show_game occ;
+insert_event Auth 336; (* "then" branch of the just inserted find *)
+simplify;
+crypto icm(enc);
+show_game occ;
+insert_event Encrypt 550; (* beginning of the branch "find ... && (pw = ke[..]) then .." in OC2 *)
+show_game occ;
+insert 1037 "let concat(x01,x02,x03,x04,x05) = h0x in"; (* just after OH0(..) := *)
+crypto rom(h0);
+auto;
+move array "@7_X_734"; (* variable chosen at the end of OC2 and not used immediately *)
+move binder "@12_r_179";
+merge_arrays "@7_X_730" "@2_Y_737";
+merge_branches;
+move array "@7_X_731"; (* variable chosen in OP and not used immediately *)
+show_game;
+merge_arrays "@7_X_730" "@2_Y_749";
+merge_branches;
+move array "@7_X_733"; (* variable chosen in OS1 and not used immediately *)
+show_game;
+merge_arrays "@7_X_730" "@2_Y_762";
+show_game occ;
+insert 110 "find jh' <= qH1, jd <= qD suchthat defined(x1[jh'], x2[jh'], x3[jh'], x4[jh'], @12_r_185[jh'], m[jd], kd[jd], @7_X_730[jd]) && (m[jd] = @9_re_234) && (U = x1[jh']) && (S = x2[jh']) && (X_s = x3[jh']) && (x4[jh'] = @7_X_730[jd]) && (auth_s = @12_r_185[jh'])  && (kd[jd] = pw) then";
+show_game occ;
+insert_event Auth2 157;
+simplify coll_elim pw;
+success
+}
+
+(* Parameter and type declarations *)
+
+param NU, NS, NP.
+
+type Z [large, bounded].
+type G [large, bounded].
+type passwd [password, bounded].
+
+type hash0 [fixed].
+type hash1 [fixed,large].
+type host [bounded].
+
+(* Computational Diffie-Hellman *)
+
+proba pCDH.
+
+expand CDH(G, Z, g, exp, mult, pCDH).
+
+(* Ideal cipher model *)
+
+type cipherkey [fixed].
+
+expand ICM_cipher(cipherkey, passwd, G, enc, dec).
+
+param qE, qD [noninteractive].
+let enc_dec_oracle =
+       (foreach iE <= qE do Oenc(x:G, ke:passwd) := return(enc(ck,x,ke)))
+     | (foreach iD <= qD do Odec(m:G, kd:passwd) := return(dec(ck,m,kd))).
+
+(* Hash functions in the random oracle model *)
+
+type hashkey [fixed].
+
+fun concat(host, host, G, G, G): bitstring [compos].
+
+param qH0, qH1 [noninteractive].
+
+expand ROM_hash(hashkey, bitstring, hash0, h0).
+
+let hashoracle0 = foreach iH0 <= qH0 do 
+    OH0(h0x: bitstring):= return(h0(hk0,h0x)). 
+
+expand ROM_hash(hashkey, bitstring, hash1, h1).
+
+let hashoracle1 = foreach iH1 <= qH1 do 
+    OH1(h1x: bitstring):= return(h1(hk1,h1x)). 
+
+(* Host names *)
+
+const U : host.
+const S : host.
+
+(* Queries *)
+
+query secret sk_u.
+query secret sk_s.
+
+event termS(host, G, host, G, hash1, hash0).
+event acceptU(host, G, host, G, hash1, hash0).
+
+query x:host, X:G, y:host, Ystar:G, a: hash1, k:hash0;
+	event inj:termS(x,X,y,Ystar,a,k) ==> inj:acceptU(x,X,y,Ystar,a,k).
+query x:host, X:G, y:host, Ystar:G, a: hash1, k:hash0, k':hash0;
+	event termS(x,X,y,Ystar,a,k) && acceptU(x,X,y,Ystar,a,k') ==> k = k'.
+
+(* Client *)
+
+let processU =
+	foreach iU <= NU do 
+	OC1() :=
+	x <-R Z;
+	X <- exp(g,x);
+	return(U, X);
+	OC2(=S, Ystar_u: G) :=
+	Y_u <- dec(ck, Ystar_u, pw);
+	K_u <- exp(Y_u, x);
+	auth_u <- h1(hk1,concat(U,S,X,Y_u,K_u));
+	sk_u: hash0 <- h0(hk0,concat(U,S,X,Y_u,K_u));
+	event acceptU(U, X, S, Ystar_u, auth_u, sk_u);
+	return(auth_u).
+
+(* Server *)
+
+let processS =
+	foreach iS <= NS do 
+	OS1(=U, X_s: G) :=
+	y <-R Z;
+	Y <- exp(g,y);
+	Ystar <- enc(ck, Y, pw);
+	return(S, Ystar);
+	OS2(auth_s: hash1) :=
+	K_s <- exp(X_s, y);
+	if auth_s = h1(hk1,concat(U,S,X_s,Y,K_s)) then
+	sk_s: hash0 <- h0(hk0,concat(U,S,X_s,Y,K_s));
+	event termS(U, X_s, S, Ystar, auth_s, sk_s).
+
+(* Sessions that are subject only to a passive attack.
+   We send a transcript of the session *)
+
+let processPassive =
+	foreach iP <= NP do 
+	OP() :=
+	xp <-R Z;
+	Xp <- exp(g, xp);
+	yp <-R Z;
+	Yp <- exp(g, yp);
+	Kp <- exp(g, mult(xp,yp));
+	Ystarp <- enc(ck, Yp, pw);
+	authp <- h1(hk1, concat(U, S, Xp, Yp, Kp));
+	sk_p: hash0 <- h0(hk0, concat(U, S, Xp, Yp, Kp));
+	return(U, Xp, S, Ystarp, authp).
+
+process 
+	Ostart() :=
+	hk0 <-R hashkey;
+	hk1 <-R hashkey;
+	ck <-R cipherkey;
+	pw <-R passwd;
+	return;
+	(processU | processS | processPassive | 
+	 enc_dec_oracle | hashoracle0 | hashoracle1)
+
+(* EXPECTED
+All queries proved.
+2.510s (user 2.500s + system 0.010s), max rss 173520K
+END *)
