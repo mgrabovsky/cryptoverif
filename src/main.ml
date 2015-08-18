@@ -63,14 +63,11 @@ let do_implementation impl =
     List.iter
       (fun (x,opt,p)->
          print_string ("Generating implementation for module "^x^"...\n");
-         let (impl,intf)=Implementation.impl_translate p opt in
-         let f=open_out ((!Settings.out_dir)^dir_sep^x^".ml") in
+         let impl=Implementation.impl_translate p opt in
+         let f=open_out ((!Settings.out_dir)^dir_sep^x^".py") in
            output_string f impl;
            close_out f;
-           let f'=open_out ((!Settings.out_dir)^dir_sep^x^".mli") in
-             output_string f' intf;
-             close_out f';
-             print_string ("Done.\n")
+           print_string ("Done.\n")
       ) impl
 
 

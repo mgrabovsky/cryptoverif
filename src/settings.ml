@@ -259,9 +259,9 @@ let t_bitstring = { tname = "bitstring";
 		    toptions = 0;
 		    tsize = tysize_LARGE;
                     timplsize = None;
-                    tpredicate = Some "always_true";
+                    tpredicate = Some "base.true_pred";
                     timplname = Some "string";
-                    tserial = Some ("id","id");
+                    tserial = Some ("","");
                     trandom = None }
 
 let t_bitstringbot = { tname = "bitstringbot";
@@ -269,7 +269,7 @@ let t_bitstringbot = { tname = "bitstringbot";
 		       toptions = 0;
 		       tsize = tysize_LARGE;
                        timplsize = None;
-                       tpredicate = Some "always_true";
+                       tpredicate = Some "base.true_pred";
                        timplname = Some "string option"; 
                        tserial = Some ("stringbot_from","stringbot_to");
                        trandom = None }
@@ -279,7 +279,7 @@ let t_bool = { tname = "bool";
 	       toptions = tyopt_FIXED + tyopt_BOUNDED;
 	       tsize = 0;
                timplsize = Some(1);
-               tpredicate = Some "always_true";
+               tpredicate = Some "base.true_pred";
                timplname = Some "bool";
                tserial = Some ("bool_from","bool_to");
                trandom = Some ("rand_bool") }

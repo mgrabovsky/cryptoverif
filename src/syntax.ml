@@ -3016,22 +3016,22 @@ let rec check_one = function
                  match tid with
                    TypeSize (size) -> 
                      begin
-                       typ.timplsize <- Some(size);
+                       typ.timplsize <- Some size;
 		       if size = 1 then
 			 begin
-                           typ.tpredicate <- Some "always_true";
-                           typ.timplname <- Some "bool";
+                           typ.tpredicate <- Some "base.true_pred";
+                           typ.timplname  <- Some "bool";
                            (* writing default serializers *)
-                           typ.tserial   <- Some ("bool_to","bool_from");
-                           typ.trandom   <- Some ("rand_bool")
+                           typ.tserial    <- Some ("base.bool_to_bytes","base.bool_from_bytes");
+                           typ.trandom    <- Some "random_bool"
 			 end
                        else if size mod 8 = 0 then 
 			 begin
-                           typ.tpredicate <- Some ("(sizep "^(string_of_int (size/8))^")");
+                           typ.tpredicate <- Some ("base.size_pred("^(string_of_int (size/8))^")");
  			   typ.timplname <- Some "string";
 			     (* writing default serializers *)
-			   typ.tserial <- Some ("id","(size_from "^(string_of_int (size/8))^")");
-                           typ.trandom <- Some ("(rand_string "^(string_of_int (size/8))^")")
+			   typ.tserial <- Some ("","base.size_from("^(string_of_int (size/8))^")");
+                           typ.trandom <- Some ("base.random_bytes("^(string_of_int (size/8))^")")
 			 end
                        else 
 			 Parsing_helper.input_error "Fixed-length types of size different from 1 and non-multiple of 8 not supported" ext
@@ -3040,8 +3040,8 @@ let rec check_one = function
                      begin
 		       if typ.toptions land Settings.tyopt_FIXED != 0 then
 			 Parsing_helper.input_error "The implementation of fixed types should be given by specifying their size" ext;
-                       typ.timplname <- Some(n);
-                       typ.tpredicate <- Some ("always_true")
+                       typ.timplname <- Some n;
+                       typ.tpredicate <- Some "base.true_pred"
                      end
                end;
                (* Parse options *)

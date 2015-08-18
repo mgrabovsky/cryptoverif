@@ -52,6 +52,5 @@ open Types
 val impl_check : impl_process list -> impl_process list
 (* takes an inputprocess and its options, and returns the contents 
    of the implementation and interface files*)
-val impl_translate : inputprocess -> impl_opt list -> (string*string)
-
+val impl_translate : inputprocess -> impl_opt list -> string
 
