@@ -146,7 +146,7 @@ and display_binder_with_array b =
       display_list display_repl_index b.args_at_creation;      
       print_string "]"
     end
-
+  
 and display_binder_with_type b =
   display_binder_with_array b;
   match b.btype.tcat with
@@ -486,7 +486,7 @@ let rec display_set = function
       display_one_set a;
       print_string " + ";
       display_set l
-
+  
 
 (* Only for the oracles front-end *)
 
@@ -567,7 +567,7 @@ let rec display_procasterm t =
   | EventAbortE(f) -> 
       print_string "\\kw{event\\string_abort}\\ ";
       print_id "\\kwf{" f.f_name "}"      
-
+      
 
 let rec display_fungroup indent = function
     ReplRestr(repl, restr, funlist) ->
@@ -732,7 +732,7 @@ let display_channel c tl =
       display_list display_term tl;
       print_string "]"
     end
-
+  
 let rec split_par p = 
   match p.i_desc with
     Par(p1,p2) -> (split_par p1) @ (split_par p2)
@@ -1036,7 +1036,7 @@ and display_optprocess indent p =
       print_string ";$\\\\\n";
       display_process indent p
     end
-
+      
 and display_optoprocess indent p =
   if p.p_desc = Yield then 
     print_string "$\\\\\n"
@@ -1061,7 +1061,7 @@ and display_oprocess_paren indent p =
 let display_process p =
   display_process "" p;
   print_string "\\\\\n"
-
+	
 (* Instructions *)
 
 let display_rem_set = function

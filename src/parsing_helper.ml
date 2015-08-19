@@ -139,11 +139,11 @@ let user_error mess =
   print_string mess;
   exit 2
 
-let buf = ref (Bytes.create 64)
+let buf = ref (String.create 64)
 let index = ref 0
 
 let clear_buffer () =
-  buf := Bytes.create 64;
+  buf := String.create 64;
   index := 0
 
 let get_string () =
@@ -155,7 +155,7 @@ let add_char c =
     begin
       let buf_len = String.length (!buf) in
         if !index >= buf_len then
-          let new_buf = Bytes.create (buf_len * 2) in
+          let new_buf = String.create (buf_len * 2) in
             String.blit !buf 0 new_buf 0 buf_len;
             buf := new_buf
     end;

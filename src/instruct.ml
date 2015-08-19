@@ -178,7 +178,7 @@ let execute_state state i =
       Settings.changed := tmp_changed;
       (state, None)
     end
-
+      
 let execute_state state = function
     SArenaming b ->
       (* Adding simplification after SArenaming *)
@@ -276,7 +276,13 @@ let remove_assign_no_sa_rename state =
   Settings.auto_sa_rename := tmp_auto_sa_rename;
   state'
 
-let simplify state = execute_with_advise_last (move_new_let (execute_with_advise_last (remove_assign_no_sa_rename state) (Simplify []))) (RemoveAssign Minimal)
+let merge state =
+  if !Settings.merge_branches then
+    execute_with_advise_last state MergeBranches
+  else
+    state
+
+let simplify state = merge (execute_with_advise_last (move_new_let (execute_with_advise_last (remove_assign_no_sa_rename state) (Simplify []))) (RemoveAssign Minimal))
 
 let expand_simplify state = simplify (execute_with_advise_last state ExpandIfFindGetInsert)
 
@@ -369,7 +375,7 @@ let rec execute_crypto_list continue = function
 	    | _ -> Parsing_helper.internal_error "The result of an ins_updater on CryptoTransf should be a list of CryptoTransf") l_crypto_transf) @ l)
 	else
 	  execute_crypto_list continue l
-
+	
 
 let rec execute_any_crypto_rec continue state = function
     [] -> continue (CFailure [])
@@ -516,7 +522,7 @@ let get_prio ((_,_,_,_,opt,_),_) =
   match opt with
     StdEqopt | ManualEqopt -> 0
   | PrioEqopt n -> n
-
+    
 let rec insert_elem a = function
     [] -> [[a]]
   | (l1::l) ->
@@ -528,7 +534,7 @@ let rec insert_elem a = function
 	  if prio_l1 = prio_a then (a::l1)::l else
 	  if prio_l1 < prio_a then l1 :: (insert_elem a l) else
 	  [a]::l1::l
-
+	  
 let rec insert_sort sorted = function
     [] -> sorted
   | (a::l) ->
@@ -584,7 +590,7 @@ let execute_any_crypto state =
   with Backtrack ->
     display_state true state;
     CFailure []
-
+	    
 (* Interactive prover *)
 
 exception End of state
@@ -621,7 +627,7 @@ let rec find_binders_term accu t =
       match topt with
 	None -> ()
       |	Some t3 -> find_binders_term accu t3
-
+      
 and find_binders_pat accu = function
     PatVar b -> add accu b
   | PatTuple(_,l) -> List.iter (find_binders_pat accu) l

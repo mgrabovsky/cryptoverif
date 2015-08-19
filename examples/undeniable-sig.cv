@@ -44,46 +44,99 @@ The fact that you are presently reading this means that you have had
 knowledge of the CeCILL-B license and that you accept its terms.
 
 *)
-(* Representation of sets of binders by a hash table, using chaining.
-   I would have liked to use the standard Caml hash table module,
-   but I could not because of a recursivity in types: the type binder
-   contains sets of binders. So I had to reimplement it *)
+(* Undeniable signature scheme of 
+   http://www.di.ens.fr/~pointche/Documents/Papers/2001_pkc.pdf
+   Section 4.2 *)
 
-open Types
+proof {
+  crypto rom(H);
+  crypto group_to_exp_strict(exp) *;
+  SArename s;
+  show_game occ;
+  replace 59 "exp(y, @3_x_133)";
+  replace 44 "exp(y, @3_x_130[@i_126])";
+  replace 23 "exp(y, @3_x_133[@i_128])";
+  crypto gdh(exp);
+  success
+}
 
-let hash b =
-  if b.vname == 0 then Hashtbl.hash b.sname else b.vname
+param NS, NC.
 
-let empty = 
-  { nelem = 0; table = Array.make 1 [] }
+type Z [large,bounded].
+type G [large,bounded].
 
-let add s elem =
-  let s = 
-    if s == empty then
-      { nelem = 0; table = Array.make 7 [] }
-    else
-      s
-  in
-  begin
-    let nslot = Array.length s.table in
-    let index = (hash elem) mod nslot in
-    if not (List.memq elem s.table.(index)) then
-      begin
-	s.nelem <- s.nelem+1;
-	s.table.(index) <- elem :: s.table.(index);
-	(* filling factor at most 3 *)
-	if s.nelem > 3 * nslot then
-	  let new_nslot = 3 * nslot in
-	  let new_table = Array.make new_nslot [] in
-	  for i = 0 to nslot - 1 do
-	    List.iter (fun elem ->
-	      let new_index = (hash elem) mod new_nslot in
-	      new_table.(new_index) <- elem :: new_table.(new_index)) s.table.(i)
-	  done;
-	  s.table <- new_table
-      end
-  end;
-  s
-    
-let mem s elem =
-  List.memq elem s.table.((hash elem) mod (Array.length s.table))
+
+(* Gap Diffie-Hellman problem *)
+
+proba pGDH.
+expand GDH(G, Z, g, exp, mult, pGDH).
+
+(* Random oracle model, optimized to avoid creating a new random hash when we test exp(hash(k,x'), e) = r' *)
+
+type hashkey [large,fixed].
+
+define ROM_hash_exp(key, hashinput, hash (*, hashoracle, qH*)) {
+
+param Nh, N, Neq.
+
+fun hash(key, hashinput):G.
+
+equiv rom(hash)
+      !Nh new k:key;
+      	  (!N Ohash(x:hashinput) := hash(k,x),
+      	   !Neq Oeq(x':hashinput, e: Z, r':G) := exp(hash(k,x'), e) = r')
+      <=(#Oeq / |G|)=> [computational]
+      !Nh (!N Ohash(x:hashinput) := 
+              find[unique] j <= N suchthat defined(x[j],r[j]) && x = x[j] then r[j] else
+	      new r:G; r,
+      	   !Neq Oeq(x':hashinput, e: Z, r':G) := 
+              find[unique] j <= N suchthat defined(x[j],r[j]) && x' = x[j] then exp(r[j], e) = r' else
+	      false).
+
+}
+
+expand ROM_hash_exp(hashkey, bitstring, H).
+param NH [noninteractive].
+channel H_in, H_out.
+let hashoracle = ! NH in(H_in, xh:bitstring); out(H_out, H(hk,xh)). 
+
+(* Query *)
+
+event forgery.
+
+query event forgery ==> false.
+
+
+channel start, c0, c1, c2, c3, c4.
+
+let Psign =
+        in(c1, m:bitstring);
+	let h = H(hk, m) in
+	let s: G = exp(h, x) in
+	out(c2, s).
+
+let Pconfirm =
+        in(c3, (m': bitstring, s': G));
+	if (exp(H(hk, m'), x) = s') then
+	       (find j <= NS suchthat defined(m[j],s[j]) && m' = m[j] && s' = s[j] then 
+	          out(c4, true)
+		else 
+		  event forgery;
+		  out(c4, true)
+               )
+	else 
+		out(c4, false).
+		(* The zero-knowledge proof is omitted *)
+
+process
+	in(start, ());
+	new hk: hashkey;
+        new x: Z;
+       	let y = exp(g, x) in
+	out(c0, y);
+	(!NS Psign | !NC Pconfirm | hashoracle)
+
+(* EXPECTED
+All queries proved.
+0.036s (user 0.032s + system 0.004s), max rss 19968K
+END *)

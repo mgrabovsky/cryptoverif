@@ -228,7 +228,7 @@ impllist:
         { [$1] }
 |       impl SEMI impllist
         { $1 :: $3 }
-
+          
 impl:
         TYPE IDENT EQUAL typeid typeoptions
         { Type($2,$4,$5) }
@@ -349,7 +349,7 @@ all:
 	{ $1 , $3 }
 
 identlist:
-
+        
         { [] }
 |       neidentlist
         { $1 }
@@ -419,7 +419,7 @@ vref:
     { $1,$3 }
 |   IDENT
     { $1, [] }
-
+    
 otherusescond:
     OTHERUSES LPAREN vreflist MAPSTO vref RPAREN
     { None }
@@ -639,13 +639,13 @@ funmode:
     { $1,Some $3, parse_extent() }
 
 newlist:
-
+    
     { [] }
 |   NEW IDENT COLON IDENT SEMI newlist
     { ($2,$4)::$6 }
 
 newlistopt:
-
+    
     { [] }
 |   NEW IDENT COLON IDENT options SEMI newlistopt
     { ($2,$4,$5)::$7 }
@@ -819,7 +819,7 @@ findlistins:
 |   findoneins ORFIND findlistins
     { $1 :: $3 }
 
-
+    
 /* Limits on elimination of collisions */
 
 factor:

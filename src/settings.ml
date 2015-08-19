@@ -69,9 +69,12 @@ let debug_simplif_add_facts = ref false
 
 let elsefind_facts_in_replace = ref true
 let max_replace_depth = ref 20
+let elsefind_facts_in_success = ref true
 let elsefind_facts_in_simplify = ref true
 let diff_constants = ref true
 let constants_not_tuple = ref true
+
+let use_known_equalities_crypto = ref true
 
 let expand_letxy = ref true
 
@@ -83,7 +86,7 @@ let max_advice_possibilities_end = ref 10
 
 let minimal_simplifications = ref true
 let merge_branches = ref true
-let merge_arrays = ref false
+let merge_arrays = ref true
 let unique_branch = ref true
 let unique_branch_reorg = ref true
 
@@ -194,12 +197,16 @@ let do_set p v =
   | "maxIterRemoveUselessAssign", I n -> max_iter_removeuselessassign := n
   | "maxAdvicePossibilitiesBeginning", I n -> max_advice_possibilities_beginning := n
   | "maxAdvicePossibilitiesEnd", I n -> max_advice_possibilities_end := n
+  | "useKnownEqualitiesInCryptoTransform", S ("true", _) -> use_known_equalities_crypto := true
+  | "useKnownEqualitiesInCryptoTransform", S ("false", _) -> use_known_equalities_crypto := false
   | "minAutoCollElim", S (s,_) -> 
       let r = parse_type_size s in
       if r <= 0 then raise Not_found;
       tysize_MIN_Auto_Coll_Elim := r
   | "elsefindFactsInReplace", S ("true",_) -> elsefind_facts_in_replace := true
   | "elsefindFactsInReplace", S ("false",_) -> elsefind_facts_in_replace := false
+  | "elsefindFactsInSuccess", S ("true",_) -> elsefind_facts_in_success := true
+  | "elsefindFactsInSuccess", S ("false",_) -> elsefind_facts_in_success := false
   | "elsefindFactsInSimplify", S ("true",_) -> elsefind_facts_in_simplify := true
   | "elsefindFactsInSimplify", S ("false",_) -> elsefind_facts_in_simplify := false
   | "maxReplaceDepth", I n -> max_replace_depth := n

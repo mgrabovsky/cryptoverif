@@ -1,5 +1,5 @@
 Cryptographic protocol verifier, copyright ENS, CNRS, INRIA, by Bruno Blanchet
-and David Cadé, 2005-2014
+and David Cadé, 2005-2015
 ENS: 	Ecole Normale Supérieure, 
 	45 rue d'Ulm, 75005 Paris, France
 CNRS:	Centre Nationale de la Recherche Scientifique
@@ -26,17 +26,17 @@ higher. Objective Caml can be downloaded from
 
 Uncompress the archive using tar:
 
-	gunzip cryptoverif1.19.tar.gz
-	tar -xf cryptoverif1.19.tar
+	gunzip cryptoverif1.20.tar.gz
+	tar -xf cryptoverif1.20.tar
 
 or if you have GNU tar:
 
-	tar -xzf cryptoverif1.19.tar.gz
+	tar -xzf cryptoverif1.20.tar.gz
 
-This will create a directory named cryptoverif1.19 in the current directory.
+This will create a directory named cryptoverif1.20 in the current directory.
 Go into this directory, and build the programs:
 
-	cd cryptoverif1.19
+	cd cryptoverif1.20
 	./build
 
 * under Windows NT, 2000, or XP (without cygwin)
@@ -57,6 +57,7 @@ of the Caml standard library
 - or modify the variable CRYPTOKIT in the scripts
 implementation/npsk/build.sh
 implementation/wlsk/build_wlsk.sh
+implementation/ssh/build.sh
 so that the cryptokit library is included.
 
 USAGE
@@ -69,7 +70,7 @@ of cryptographic protocols. To run CryptoVerif on example X, execute
 e.g.	./cryptoverif examples/otway-rees3Stream
 
 Note: CryptoVerif must be run in the directory that contains the files
-"default.cvl" and "default.ocvl" (which is the cryptoverif1.19
+"default.cvl" and "default.ocvl" (which is the cryptoverif1.20
 directory). CryptoVerif accesses these files which contain definitions
 of cryptographic primitives.
 

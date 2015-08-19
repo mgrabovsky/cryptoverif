@@ -228,7 +228,7 @@ impllist:
         { [$1] }
 |       impl SEMI impllist
         { $1 :: $3 }
-
+          
 impl:
         TYPE IDENT EQUAL typeid typeoptions
         { Type($2,$4,$5) }
@@ -348,7 +348,7 @@ all:
 	{ $1, $3 }
 
 identlist:
-
+        
         { [] }
 |       neidentlist
         { $1 }
@@ -418,7 +418,7 @@ vref:
     { $1,$3 }
 |   IDENT
     { $1, [] }
-
+    
 vreflist:
     vref
     { [$1] }
@@ -684,7 +684,7 @@ funmode:
     { $1,Some $3, parse_extent() }
 
 newlist:
-
+    
     { [] }
 |   IDENT RANDOM IDENT SEMI newlist
     { ($1,$3)::$5 }

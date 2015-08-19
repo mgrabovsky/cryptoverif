@@ -67,10 +67,13 @@ val debug_simplif_add_facts : bool ref
 
 val elsefind_facts_in_replace : bool ref
 val max_replace_depth : int ref
+val elsefind_facts_in_success : bool ref
 val elsefind_facts_in_simplify : bool ref
 
 val diff_constants : bool ref
 val constants_not_tuple : bool ref 
+
+val use_known_equalities_crypto : bool ref
 
 val expand_letxy : bool ref
 

@@ -44,11 +44,8 @@ The fact that you are presently reading this means that you have had
 knowledge of the CeCILL-B license and that you accept its terms.
 
 *)
-(* Signed Diffie-Hellman protocol 
-
-This file proves a forward secrecy property. It is only a first step,
-a more satisfactory forward secrecy property is to be proved in the future. 
-*)
+(* Signed Diffie-Hellman protocol
+   This file proves a forward secrecy property. *)
 
 param N, N2.
 
@@ -65,11 +62,15 @@ type G [large,bounded].
 type D [fixed].
 
 proof {
+success; (* prove query x:G, y:G, k:D, k':D; event endB(A, B, x, y, k) && endA(A, B, x, y, k') ==> k = k'. *)
 crypto uf_cma_corrupt(sign) rkA;
+success; (* prove query x:G, y:G, k:D; event inj:endB(A, B, x, y, k) ==> inj:endA(A, B, x, y, k) || evAcorrupted. *)
 crypto uf_cma_corrupt(sign) rkB;
+success; (* prove query x:G, y:G, k:D; event inj:endA(A, B, x, y, k) ==> inj:beginB(A, B, x, y) || evBcorrupted. *)
 crypto rom(h);
-crypto cdh(exp);
-auto
+crypto cdh(exp) a b;
+simplify;
+success
 }
 
 (* the CDH assumption *) 
@@ -103,38 +104,41 @@ expand UF_CMA_signature(keyseed, pkey, skey, blocksize, signature, seed, skgen, 
 const A,B:host.
 
 (* query *)
-query secret keyA.
-query secret keyB.
+query secret kA_secret.
 
-event endA(host, host, G, G).
+event endA(host, host, G, G, D).
 event beginB(host, host, G, G).
-event endB(host, host, G, G).
+event endB(host, host, G, G, D).
 event evAcorrupted.
 event evBcorrupted.
 
-query x:G, y:G; event inj:endA(A, B, x, y) ==> inj:beginB(A, B, x, y) || evBcorrupted.
-query x:G, y:G; event inj:endB(A, B, x, y) ==> inj:endA(A, B, x, y) || evAcorrupted.
+query x:G, y:G, k:D; event inj:endA(A, B, x, y, k) ==> inj:beginB(A, B, x, y) || evBcorrupted.
+query x:G, y:G, k:D; event inj:endB(A, B, x, y, k) ==> inj:endA(A, B, x, y, k) || evAcorrupted.
+query x:G, y:G, k:D, k':D; event endB(A, B, x, y, k) && endA(A, B, x, y, k') ==> k = k'.
 
-channel start, cstart, cA1, cA2, cA3, cA4, cA5, cA6, cB1, cB2, cB3, cB4, cB5, cH, cHret, cK, cCorruptA, cCorruptB.
+channel start, cstart, cA1, cA2, cA3, cA4, cA5, cA6, cA7, cA8, cB1, cB2, cB3, cB4, cB5, cB6, cH, cHret, cK, cCorruptA, cCorruptB.
 
 let processA = 
   in(cA1, (hostB: host));
   new a:Z;
-  let ga = exp(g,a) in
-  out(cA2, (A, hostB, ga));
-  in(cA3, (=A, =hostB, gb:G, s:signature));
+  let Aga:G = exp(g,a) in
+  out(cA2, (A, hostB, Aga));
+  in(cA3, (=A, =hostB, Agb:G, s:signature));
   find j2 <= N2 suchthat defined(Khost[j2],Rkey[j2]) && (Khost[j2] = hostB) then
   let pkhostB = Rkey[j2] in
-  if check(concatB(A, hostB, ga, gb), pkhostB, s) then
+  if check(concatB(A, hostB, Aga, Agb), pkhostB, s) then
   new r2: seed;
-  event endA(A, hostB, ga, gb);
-  out(cA4, sign(concatA(A, hostB, ga, gb), skA, r2));
+  let sA = sign(concatA(A, hostB, Aga, Agb), skA, r2) in
+  let gab = exp(Agb, a) in
+  let kA: D = h(hk, gab) in 
+  event endA(A, hostB, Aga, Agb, kA);
+  out(cA4, sA);
   (* OK *)
   in(cA5, ());
-  let gab = exp(gb, a) in
-  let kA = h(hk, gab) in 
   if hostB = B then 
-  (if defined(Bcorrupted) then out(cA6, ()) else let keyA:D = kA)
+  (if defined(Acorrupted) then out(cA6, kA) else
+   if defined(Bcorrupted) then out(cA6, kA) else 
+   let kA_secret:D = kA)
   else
    out(cA6, kA).
 
@@ -145,24 +149,35 @@ let corruptA =
   out(cCorruptA, skA).
 
 let processB =
-  in(cB1, (hostA:host, =B, ga:G));
+  in(cB1, (hostA:host, =B, Bga:G));
   new b:Z;
-  let gb = exp(g,b) in
+  let Bgb = exp(g,b) in
   new r1:seed;
-  event beginB(hostA, B, ga, gb);
-  out(cB2, (hostA, B, gb, sign(concatB(hostA, B, ga, gb), skB, r1)));
+  event beginB(hostA, B, Bga, Bgb);
+  out(cB2, (hostA, B, Bgb, sign(concatB(hostA, B, Bga, Bgb), skB, r1)));
   in(cB3, s:signature);
   find j2 <= N2 suchthat defined(Khost[j2],Rkey[j2]) && (Khost[j2] = hostA) then
   let pkhostA = Rkey[j2] in
-  if check(concatA(hostA, B, ga, gb), pkhostA, s) then
-  let gab = exp(ga, b) in
+  if check(concatA(hostA, B, Bga, Bgb), pkhostA, s) then
+  let gab = exp(Bga, b) in
   let kB = h(hk, gab) in
-  event endB(hostA, B, ga, gb);
+  event endB(hostA, B, Bga, Bgb, kB);
   (* OK *)
   if hostA = A then
-  (if defined(Acorrupted) then out(cB4, ()) else let keyB:D = kB)
+    (find j <= N suchthat defined(hostB[j], Aga[j], Agb[j], kA[j]) &&
+         hostB[j] = B && Aga[j] = Bga && Agb[j] = Bgb then 
+       (* Here, there is a A partner of this instance of B;
+          the secrecy of the key is proved at A *) 
+       yield 
+     else
+       (* There is no A partner of this B, we can leak the key.
+          Note that this can never happen when A is not corrupted 
+	  by the correspondence. So we could in fact always leak kB here
+	  without testing for the corruption. 
+       if defined(Acorrupted) then out(cB4, kB) else
+       if defined(Bcorrupted) then *) out(cB4, kB))
   else
-   out(cB4, kB).
+    out(cB4, kB).
 
 let corruptB =
   in(cCorruptB, ()); 
@@ -190,8 +205,7 @@ process
 	out(cstart, (pkA, pkB));
 	((!N processA) | (!N processB) | processH | processK | corruptA | corruptB)
 
-
 (* EXPECTED
 All queries proved.
-2.790s (user 2.780s + system 0.010s), max rss 112944K
+2.380s (user 2.316s + system 0.064s), max rss 169936K
 END *)

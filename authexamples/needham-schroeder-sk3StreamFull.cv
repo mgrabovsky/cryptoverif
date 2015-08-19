@@ -222,6 +222,6 @@ process
 
 
 (* EXPECTED
-RESULT Could not prove one-session secrecy of keyA, secrecy of keyA, event fullA(B, k, x) && fullB(A, k', x) ==> (k = k'), event inj:fullB(A, k, x) ==> inj:fullA(B, k, x).
+RESULT Could not prove one-session secrecy of keyA, secrecy of keyA, event fullA(B, k, x) && fullB(A, k', x) ==> (k = k').
 5.580s (user 5.540s + system 0.040s), max rss 120656K
 END *)

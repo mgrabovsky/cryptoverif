@@ -44,96 +44,95 @@ The fact that you are presently reading this means that you have had
 knowledge of the CeCILL-B license and that you accept its terms.
 
 *)
-(* OAEP scheme, proof of CPA security *)
+(* Undeniable signature scheme of 
+   http://www.di.ens.fr/~pointche/Documents/Papers/2001_pkc.pdf
+   Section 4.2 *)
 
 proof {
-      crypto rom(H);
-      crypto rom(G);
-      show_game occ;
-      insert_event bad1 32;
-      show_game occ;
-      insert_event bad2 60;
-      crypto remove_xor(xorDr) "@10_r_129";
-      crypto remove_xor(xorDow) "@9_r_137";      
-      remove_assign binder pk;
-      crypto pd_ow(f) "r_107" "@9_r_146" "@10_r_144";
-      success
+  crypto rom(H);
+  crypto group_to_exp_strict(exp) *;
+  SArename s;
+  show_game occ;
+  replace 60 "exp(y, @3_x_133)";
+  replace 45 "exp(y, @3_x_130[@i_126])";
+  replace 24 "exp(y, @3_x_133[@i_128])";
+  crypto gdh(exp);
+  success
 }
 
-param qS.
+param NS, NC.
 
-type pkey [bounded].
-type skey [bounded].
-type seed [large,fixed].
-type D [fixed,large].
-type Dow [fixed,large].
-type Dr [fixed,large].
+type Z [large,bounded].
+type G [large,bounded].
 
-(* Set partial-domain one-way trapdoor permutation *)
 
-proba P_PD_OW.
+(* Gap Diffie-Hellman problem *)
 
-expand set_PD_OW_trapdoor_perm(seed, pkey, skey, D, Dow, Dr, pkgen, skgen, f, invf, concat, P_PD_OW).
+proba pGDH.
+expand GDH(G, Z, g, exp, mult, pGDH).
 
-(* Hash functions, random oracle model *)
+(* Random oracle model, optimized to avoid creating a new random hash when we test exp(hash(k,x'), e) = r' *)
 
-type hashkey [fixed].
+type hashkey [large,fixed].
 
-expand ROM_hash(hashkey, Dr, Dow, G).
-param qG [noninteractive].
-let hashoracleG = foreach iG <= qG do OG(x:Dr) := return(G(hkg,x)).
+define ROM_hash_exp(key, hashinput, hash (*, hashoracle, qH*)) {
 
-expand ROM_hash(hashkey, Dow, Dr, H).
-param qH [noninteractive].
-let hashoracleH = foreach iH <= qH do OH(x:Dow) := return(H(hkh,x)).
+param Nh, N, Neq.
 
-(* concatenation *)
-type Dm.
-type Dz [large].
+fun hash(key, hashinput):G.
 
-fun concatm(Dm,Dz):Dow [compos].
-const zero: Dz.
+equiv rom(hash)
+      foreach ih <= Nh do k <-R key;
+        (foreach i <= N do OH(x:hashinput) := return(hash(k,x)) |
+         foreach ieq <= Neq do Oeq(x':hashinput, e:Z, r':G) := return(exp(hash(k,x'),e) = r'))
+       <=(#Oeq / |G|)=> [computational]
+      foreach ih <= Nh do 
+        (foreach i <= N do OH(x:hashinput) := 
+	   find[unique] u <= N suchthat defined(x[u],r[u]) && x= x[u] then return(r[u]) else r <-R G; return(r) |
+         foreach ieq <= Neq do Oeq(x':hashinput, e:Z, r':G) := 
+           find[unique] u <= N suchthat defined(x[u],r[u]) && x' = x[u] then return(exp(r[u], e) = r') else
+	   return(false)).
 
-(* Xor *)
+}
 
-expand Xor(Dow, xorDow, zeroDow).
-expand Xor(Dr, xorDr, zeroDr).
+expand ROM_hash_exp(hashkey, bitstring, H).
+param NH [noninteractive].
+let hashoracle = foreach i <= NH do OH(xh:bitstring) := return(H(hk,xh)). 
 
-(* Implementing a test as a function.
-   Useful to avoid expanding if, which is necessary for this proof. *)
+(* Query *)
 
-fun test(bool, Dm, Dm):Dm.
-forall x:Dm,y:Dm; test(true,x,y) = x.
-forall x:Dm,y:Dm; test(false,x,y) = y.
+event forgery.
 
-(* Queries *)
+query event forgery ==> false.
 
-query secret1 b1.
+let Psign =
+        OS(m:bitstring) :=
+	h <- H(hk, m);
+	s: G <- exp(h, x);
+	return(s).
 
-let processT = 
-	OT(m1: Dm, m2: Dm) :=
-	b1 <-R bool;
-	(* The next line is equivalent to an "if" that will not be
-	expanded. This is necessary for the system to succeed in
-	proving the protocol. *)
-	menc <- test(b1, m1, m2);
-	r <-R Dr;
-	s <- xorDow(concatm(menc, zero), G(hkg,r));
-	t <- xorDr(r, H(hkh,s));
-	return(f(pk, concat(s,t))).
+let Pconfirm =
+        OC(m': bitstring, s': G) :=
+	if (exp(H(hk, m'), x) = s') then
+	       (find j <= NS suchthat defined(m[j],s[j]) && m' = m[j] && s' = s[j] then 
+	          return(true)
+		else 
+		  event forgery;
+		  return(true)
+               )
+	else 
+		return(false).
+		(* The zero-knowledge proof is omitted *)
 
-process 
-	Ogen() :=
-	hkh <-R hashkey;
-	hkg <-R hashkey;
-	r <-R seed; 
-	pk <- pkgen(r);
-	sk <- skgen(r);
-	return(pk);
-	(hashoracleG | hashoracleH | processT)
-
+process
+	Ostart() :=
+	hk <-R hashkey;
+        x <-R Z;
+       	let y = exp(g, x) in
+	return(y);
+	(foreach iS <= NS do Psign | foreach iC <= NS do Pconfirm | hashoracle)
 
 (* EXPECTED
 All queries proved.
-0.030s (user 0.030s + system 0.000s), max rss 19856K
+0.036s (user 0.032s + system 0.004s), max rss 19968K
 END *)

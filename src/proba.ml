@@ -111,7 +111,7 @@ let is_small_enough_coll_elim (proba_l, proba_t) =
 
 let is_small_enough_collision proba_l =
   List.exists (is_smaller proba_l) (!Settings.allowed_collisions_collision)
-
+  
 
 let whole_game = ref { proc = Terms.iproc_from_desc Nil; game_number = -1; current_queries = [] }
 

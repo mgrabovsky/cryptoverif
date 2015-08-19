@@ -42,7 +42,7 @@ echo TEST
 echo
 output=test`date '+%Y.%m.%d-%H_%M_%S'`
 (
-for i in otway-rees2Stream otway-rees2StreamTag otway-rees3Stream otway-rees3StreamTag otway-rees2Block otway-rees2BlockTag otway-rees3Block otway-rees3BlockTag yahalom3Stream yahalom3StreamMod yahalom3StreamMac needham-schroeder-sk3Stream needham-schroeder-skcorr3Stream needham-schroeder-skcorr3StreamAuth2 fdh fdh-JSC pfdh woolamsk woolamskcorr woolamskcorr_tbl denning-sacco3Block denning-sacco-corr3Block needham-schroeder-pk3Block needham-schroeder-pk3BlockHash needham-schroeder-pkcorr3Block needham-schroeder-pkcorr3BlockHash needham-schroeder-pk3BlockAuth needham-schroeder-pkcorr3BlockAuth encryptBR93-1 woolampk woolampkcorr woolamskcorrBlock encryptBR93-2 encryptBR93-2v denning-sacco-corr3Block-auto needham-schroeder-pkcorr3BlockHash-auto wmf-tagged wmf-tagged-payload signedDH signedDH-DDH signedDH-DDH-auto signedDH-forward-secrecy
+for i in otway-rees2Stream otway-rees2StreamTag otway-rees3Stream otway-rees3StreamTag otway-rees2Block otway-rees2BlockTag otway-rees3Block otway-rees3BlockTag yahalom3Stream yahalom3StreamMod yahalom3StreamMac needham-schroeder-sk3Stream needham-schroeder-skcorr3Stream needham-schroeder-skcorr3StreamAuth2 fdh fdh-JSC pfdh woolamsk woolamskcorr woolamskcorr_tbl denning-sacco3Block denning-sacco-corr3Block needham-schroeder-pk3Block needham-schroeder-pk3BlockHash needham-schroeder-pkcorr3Block needham-schroeder-pkcorr3BlockHash needham-schroeder-pk3BlockAuth needham-schroeder-pkcorr3BlockAuth encryptBR93-1 woolampk woolampkcorr woolamskcorrBlock encryptBR93-2 encryptBR93-2v denning-sacco-corr3Block-auto needham-schroeder-pkcorr3BlockHash-auto wmf-tagged wmf-tagged-payload signedDH signedDH-DDH signedDH-DDH-auto signedDH-forward-secrecy undeniable-sig
 do
 	analyze $i "" examples/$i.cv tests/$output
 done
@@ -67,7 +67,7 @@ echo OTEST
 echo
 output=otest`date '+%Y.%m.%d-%H_%M_%S'`
 (
-for i in fdh.ocv fdh-JSC.ocv encryptBR93-1.ocv encryptBR93-2.ocv encryptBR93-2v.ocv signedDH.ocv  signedDH-DDH.ocv OEKE.ocv OAEP-CPA.ocv
+for i in fdh.ocv fdh-JSC.ocv encryptBR93-1.ocv encryptBR93-2.ocv encryptBR93-2v.ocv signedDH.ocv  signedDH-DDH.ocv OEKE.ocv OAEP-CPA.ocv undeniable-sig.ocv
 do
     analyze $i "-in oracles" oexamples/$i tests/$output
 done
@@ -97,13 +97,13 @@ echo
 echo NDTEST
 echo
 output=ndtest`date '+%Y.%m.%d-%H_%M_%S'`
-rm examplesnd/test/*~ examplesnd/kerberos/*~ examplesnd/otest/*~
+rm examplesnd/*/*~ 
 (
 echo
 echo CHANNELS FRONTEND
 echo
 
-for i in examplesnd/test/* examplesnd/kerberos/*
+for i in examplesnd/test/* examplesnd/kerberos/* examplesnd/arinc823/*.cv
 do
     if [ -f $i ]
     then

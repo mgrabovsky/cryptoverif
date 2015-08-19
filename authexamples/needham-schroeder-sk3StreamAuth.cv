@@ -203,6 +203,6 @@ process
 
 
 (* EXPECTED
-RESULT Could not prove event inj:fullB(A, x) ==> inj:fullA(B, x).
+All queries proved.
 3.360s (user 3.340s + system 0.020s), max rss 120640K
 END *)

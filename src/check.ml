@@ -181,7 +181,7 @@ let rec build_def_fungroup above_node = function
 			  binders = List.map fst restr; 
 			  true_facts_at_def = []; def_vars_at_def = [];
 			  elsefind_facts_at_def = [];
-			  future_binders = []; future_true_facts = [];
+			  future_binders = []; future_true_facts = []; n_compatible = Terms.compatible_empty;
 			  definition = DFunRestr } 
       in
       List.iter (fun (b,_) -> b.def <- above_node2 :: b.def) restr;
@@ -190,7 +190,7 @@ let rec build_def_fungroup above_node = function
     let above_node1 = { above_node = above_node; binders = args; 
 			true_facts_at_def = []; def_vars_at_def = [];
 			elsefind_facts_at_def = [];
-			future_binders = []; future_true_facts = [];
+			future_binders = []; future_true_facts = []; n_compatible = Terms.compatible_empty;
 			definition = DFunArgs } 
     in
     List.iter (fun b -> b.def <- above_node1 :: b.def) args;
@@ -309,7 +309,7 @@ and get_arg_array_ref_pat index_args accu = function
   | PatTuple (f,l) ->
       List.iter (get_arg_array_ref_pat index_args accu) l
   | PatEqual t -> get_arg_array_ref index_args accu t
-
+    
 
 (* Version of check_def_term for equivalences
    This function is stricter: references to find and replication indices
@@ -378,7 +378,7 @@ let check_def_member l =
   let rec st_node = { above_node = st_node; binders = []; 
 		      true_facts_at_def = []; def_vars_at_def = [];
 		      elsefind_facts_at_def = [];
-		      future_binders = []; future_true_facts = [];
+		      future_binders = []; future_true_facts = []; n_compatible = Terms.compatible_empty;
 		      definition = DNone } 
   in
   List.iter (fun (fg, mode) -> build_def_fungroup st_node fg) l;
@@ -419,11 +419,11 @@ let rec check_lm_term t =
 
 let rec reduce_rec t =
   let reduced = ref false in
-  let t' = Terms.apply_eq_reds Terms.try_no_var_id reduced t in
+  let t' = Terms.apply_eq_reds Terms.simp_facts_id reduced t in
   if !reduced then 
     reduce_rec t'
   else t
-
+      
 let rec check_lm_fungroup = function
     ReplRestr(repl, restr, funlist) ->
       let funlist' = List.map check_lm_fungroup funlist in
@@ -510,7 +510,7 @@ let rec check_rm_term allowed_index_seq t =
 			 ) def_list;
 	      if !max_sequence == [] then
 		Parsing_helper.input_error "In equivalences, in find, one \"defined\" variable reference should imply all others" t.t_loc;
-
+	      
 	      let l1 = !max_sequence in
 	      let l1_binders = List.map (function
 		  { t_desc = ReplIndex(b) } -> b
@@ -685,14 +685,14 @@ and update_def_list_pat corresp_list = function
     PatVar b -> PatVar b
   | PatTuple(f,l) -> PatTuple(f, List.map (update_def_list_pat corresp_list) l)
   | PatEqual t -> PatEqual (update_def_list_term corresp_list t)
-
+    
 
 let rec update_def_list corresp_list = function
     ReplRestr(repl, restr, fungroup) ->
       ReplRestr(repl, restr, List.map (update_def_list corresp_list) fungroup)
   | Fun(ch, args, res, priority) ->
       Fun(ch, args, update_def_list_term corresp_list res, priority)
-
+	
 let move_names_all lmg rmg =
   let corresp_list = ref [] in
   let rmg' = 
@@ -821,7 +821,7 @@ let find_assoc restr funlist b' bopt' funlist' =
 	    find_min_def_check l
     in
     find_min_def_check restr
-
+      
 
 let rec build_restr_mapping_fungroup restr_mapping lm rm =
   match lm, rm with

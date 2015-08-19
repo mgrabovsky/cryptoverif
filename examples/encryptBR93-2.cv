@@ -48,7 +48,7 @@ knowledge of the CeCILL-B license and that you accept its terms.
 Practical: a Paradigm for Designing Efficient Protocols, CCS'93, 
 section 3.2: 
 	E(x) = f(r) || H(r) xor x || H2(r || x) 
-(CCA2) -- in progress *)
+(CCA2) *)
 
 (* set interactiveMode = true. 
 The proof is as follows: *)
@@ -67,7 +67,7 @@ proof {
 }
 
 (* 
-After crypto rom(hash2), we have to simplify:
+After crypto rom(hash2), we simplify:
 
 in(hstart, ());
       new hk: hashkey;
@@ -146,11 +146,9 @@ This simplification now succeeds thanks to the improved treatment of xor.
         )
       )
 
-If we make this simplification, the proof then goes through.
+After this simplification, the proof goes through.
 
-See encryptBR93-2b for another variant that works but is less
-satisfactory.
-
+See encryptBR93-2b for another, less satisfactory variant.
 *)
 
 param nx, qD.

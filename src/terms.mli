@@ -208,7 +208,22 @@ val subst3 : (binder * term) list -> term -> term
 val subst_def_list3 : (binder * term) list -> binderref list -> binderref list
 val subst_oprocess3 : (binder * term) list -> process -> process
 
+(* [find_some f l] returns [f a] for the first element
+   [a] of the list [l] such that [f a <> None].
+   It returns [None] if [f a = None] for all [a] in [l]. *)
+val find_some : ('a -> 'b option) -> 'a list -> 'b option
+
+(* [replace l1 l0 t] replaces all terms in [l1] with the 
+   corresponding term in [l0] inside [t] *)
+val replace : term list -> term list -> term -> term
+
 (* Functions for manipulating terms with equations *)
+
+(* [try_no_var simp_facts t] returns [t] unchanged when it
+   is a function application and tries to replace it with its value
+   using the rewrite rules in [simp_facts] when it is a variable.
+   See facts.ml for additional information on [simp_facts]. *)
+val try_no_var : simp_facts -> term -> term
 
 (* Identity function, to be used as placeholder for
    a term simplification function when we don't want to do
@@ -226,17 +241,6 @@ val try_no_var_id : term -> term
    of variables. *)
 val compute_inv : (term -> term) -> bool ref ->
   funsymb * funsymb * funsymb -> term -> term
-
-(* Simplification function:
-   [simp_prod try_no_var reduced sub_eq f t] simplifies term [t].
-   [f] is a binary function with an equational theory. 
-   [simp_prod] returns a list of terms [l], such that [t] is equal to
-   the product of the elements of [l] by function [f].
-   Function [sub_eq] is used to test equality between elements.
-   [reduced] is set to true when [t] has really been simplified.
-   [try_no_var] is as above. *)
-val simp_prod : (term -> term) -> bool ref ->
-  (term -> term -> bool) -> funsymb -> term -> term list
 
 (* [make_prod prod l] computes the product by function [prod]
    of the elements in list [l]. [l] must not be empty. *)
@@ -256,26 +260,48 @@ val get_prod_list : (term -> term) -> term list -> eq_th
    of [t] is [f]. *)
 val is_fun : funsymb -> term -> bool
 
-(* [remove_inverse_ends try_no_var reduced group_th sub_eq l] removes the
+(* Simplification function:
+   [simp_prod simp_facts reduced f t] simplifies term [t].
+   [f] is a binary function with an equational theory. 
+   [simp_prod] returns a list of terms [l], such that [t] is equal to
+   the product of the elements of [l] by function [f].
+   [simp_facts] collects the rewrite rules corresponding to known equalities
+   and other known facts, which we use in order to replace variables with their values and
+   to test equality between terms.
+   [reduced] is set to true when [t] has really been simplified. *)
+val simp_prod : simp_facts -> bool ref -> funsymb -> term -> term list
+
+(* [remove_inverse_ends simp_facts reduced group_th l] removes the
    inverse elements at the two ends of the list [l]. In a non-commutative group,
    the product of the elements [l] is the neutral element if and only if the
    product of the resulting list is: x * t * x^-1 = e iff t = e by multiplying
    on the left by x^-1 and on the right by x. 
    [group_th = (f, inv,n)] is supposed to be a group, with product [f],
    inverse function [inv], and neutral element [n].    
-   [try_no_var], [reduced], and [sub_eq] are as above. *)
+   [simp_facts], [reduced], and [sub_eq] are as above. *)
 
 val remove_inverse_ends :
-  (term -> term) -> bool ref -> funsymb * funsymb * funsymb ->
-  (term -> term -> bool) -> term list -> term list
+  simp_facts -> bool ref -> funsymb * funsymb * funsymb ->
+  term list -> term list
 
-(* [apply_eq_reds try_no_var reduced t] simplifies the term [t] using
+(* [apply_eq_reds simp_facts reduced t] simplifies the term [t] using
    the equational theory. [reduced] is set when the term [t] is really
-   simplified. [try_no_var] is as in [compute_inv] above. *) 
-val apply_eq_reds : (term -> term) -> bool ref -> term -> term
+   simplified. [simp_facts] is as in [simp_prod] above. *) 
+val apply_eq_reds : simp_facts -> bool ref -> term -> term
+
+(* [simp_facts_id] is a placeholder for [simp_facts] when there are 
+   no known facts. *)
+val simp_facts_id : simp_facts
 
 (* Equality tests between terms, lists of terms, ... *)
-val simp_equal_terms : (term -> term) -> term -> term -> bool
+
+(* [simp_equal_terms simp_facts normalize_root t1 t2] returns true when
+   the terms [t1] and [t2] are equal. It uses the rewrite rules in
+   [simp_facts] to reduce the terms in order to infer more equalities.
+   When [normalize_root] is false, the rewrite rules in [simp_facts]
+   are not applied at the root of the terms [t1] and [t2]. *)
+val simp_equal_terms : simp_facts -> bool -> term -> term -> bool
+
 val equal_terms : term -> term -> bool
 val synt_equal_terms : term -> term -> bool
 val equal_term_lists : term list -> term list -> bool 
@@ -296,6 +322,7 @@ val mem_binderref : binderref -> binderref list -> bool
 val add_binderref : binderref -> binderref list ref -> unit
 val setminus_binderref : binderref list -> binderref list -> binderref list
 val inter_binderref : binderref list -> binderref list -> binderref list
+val union_binderref : binderref list -> binderref list -> binderref list
 
 val get_deflist_subterms : binderref list ref -> term -> unit
 val get_deflist_process : binderref list ref -> inputprocess -> unit
@@ -312,6 +339,7 @@ val refers_to_nodef : binder -> term -> bool
 val refers_to_process_nodef : binder -> process -> bool
 
 val vars_from_pat : binder list -> pattern -> binder list
+val vars_from_pat_list : binder list -> pattern list -> binder list
 val occurs_in_pat : binder -> pattern -> bool
 
 val is_true : term -> bool
@@ -404,8 +432,18 @@ val unionq : 'a list -> 'a list -> 'a list (* union using physical equality *)
 
 val compatible_empty : binderset
 val empty_comp_process : inputprocess -> unit
+(* [build_def_process] must be called before [build_compatible_defs] *)
 val build_compatible_defs : inputprocess -> unit
+(* [is_compatible (b,args) (b',args')] returns true when
+   [b[args]] and [b'[args']] may both be defined *)
 val is_compatible : binderref -> binderref -> bool
+(* [both_def_add_fact fact_accu (b,args) (b',args')]
+   adds to [fact_accu] a fact that always holds when
+   [b[args]] and [b'[args']] are both defined. *)
+val both_def_add_fact : term list ref -> binderref -> binderref -> unit
+(* [may_def_before (b,args) (b',args')] returns true when
+   [b[args]] may be defined before [b'[args']] *)
+val may_def_before : binderref -> binderref -> bool
 
 (* Update args_at_creation: since variables in conditions of find have
 as args_at_creation the indices of the find, transformations of the
@@ -420,7 +458,7 @@ val update_args_at_creation : repl_index list -> term -> term
 
 val default_match_error : unit -> 'a
 
-(* [match_funapp match_term get_var_link match_error try_no_var next_f t t' state]
+(* [match_funapp match_term get_var_link match_error simp_facts next_f t t' state]
    matches [t] and [t']; [t] must be FunApp, otherwise matching
    is considered to fail. The other cases must have been handled previously.
 
@@ -440,8 +478,9 @@ val default_match_error : unit -> 'a
    (In most cases, [match_error] should be [default_match_error],
    which raises the [NoMatch] exception.)
 
-   [try_no_var]: [try_no_var t] tries to replace variables with their
-   values in [t]; it returns the resulting term.
+   [simp_facts] collects the rewrite rules corresponding to known equalities
+   and other known facts, which we use in order to replace variables with their values and
+   to test equality between terms.
 
    [next_f]: [next_f state'] is called when the matching succeeds,
    that is, the variables in [t] are linked so that [\sigma t = t'].
@@ -453,15 +492,15 @@ val match_funapp :
   (('b -> 'a) -> term -> term -> 'b -> 'a) ->
   (term -> 'b -> (linktype * bool) option) ->
   (unit -> 'a) -> 
-  (term -> term) ->
+  simp_facts ->
   ('b -> 'a) -> term -> term -> 'b -> 'a
 
-(* [match_assoc_subterm match_term get_var_link next_f try_no_var prod l1 l2 state]
+(* [match_assoc_subterm match_term get_var_link next_f simp_facts prod l1 l2 state]
    matches the lists of terms [l1] and [l2] modulo associativity of the product
    function [prod].
    More precisely, it calls [next_f left_rest right_rest state'] after linking variables in [l1]
    so that [left_rest. \sigma l1 . right_rest = l2] modulo associativity.
-   [match_term], [get_var_link], [try_no_var] are as in the function
+   [match_term], [get_var_link], [simp_facts] are as in the function
    [match_funapp] above.
    *)
 
@@ -469,10 +508,10 @@ val match_assoc_subterm :
   (('b -> 'a) -> term -> term -> 'b -> 'a) ->
   (term -> 'b -> (linktype * bool) option) ->
   (term list -> term list -> 'b -> 'a) ->
-  (term -> term) ->
+  simp_facts ->
   funsymb -> term list -> term list -> 'b -> 'a
 
-(* [match_AC match_term get_var_link match_error next_f try_no_var prod allow_rest l1 l2 state]
+(* [match_AC match_term get_var_link match_error next_f simp_facts prod allow_rest l1 l2 state]
    matches the lists of terms [l1] and [l2] modulo associativity and commutativity
    of the product function [prod].
    [allow_rest] is true when one is allowed to match only a sublist of [l2] with [l1].
@@ -481,7 +520,7 @@ val match_assoc_subterm :
    When [allow_rest] is true, it calls [next_f lrest state']  after linking variables in [l1]
    so that [\sigma l1 . lrest = l2] modulo AC. 
 
-   [match_term], [get_var_link], [match_error], [try_no_var] are as in the function
+   [match_term], [get_var_link], [match_error], [simp_facts] are as in the function
    [match_funapp] above.
 *)
 
@@ -490,7 +529,7 @@ val match_AC :
   (term -> 'b -> (linktype * bool) option) ->
   (unit -> 'a) -> 
   (term list -> 'b -> 'a) ->
-  (term -> term) ->
+  simp_facts ->
   funsymb -> bool -> term list -> term list -> 'b -> 'a
 
 (* [match_term_list match_term next_f l l' state] matches the lists of terms
@@ -505,7 +544,7 @@ val match_term_list :
 
 (* Matching with advice, for use in transf_crypto.ml *)
 
-(* [match_assoc_advice_subterm match_term explicit_value get_var_link is_var_inst next_f prod l1 l2 state]
+(* [match_assoc_advice_subterm match_term explicit_value get_var_link is_var_inst next_f simp_facts prod l1 l2 state]
    matches the lists [l1] and [l2] modulo associativity. 
    More precisely, it calls [next_f left_rest right_rest state']  after linking variables in [l1]
    so that [left_rest. \sigma l1 . right_rest = l2] modulo associativity.
@@ -530,6 +569,10 @@ val match_term_list :
    [is_var_inst]: [is_var_inst t] returns [true] when [t] is a variable
    that can be instantiated by applying advice.
 
+   [simp_facts] collects the rewrite rules corresponding to known equalities
+   and other known facts, which we use in order to replace variables with their values and
+   to test equality between terms.
+
    [prod] is the product function symbol, which is associative or AC.
  *)
 
@@ -539,9 +582,10 @@ val match_assoc_advice_subterm :
   (term -> 'a -> (linktype * bool) option) ->
   (term -> bool) ->
   (term list -> term list -> 'a -> 'b) ->
+  simp_facts ->
   funsymb -> term list -> term list -> 'a -> 'b
 
-(* [match_assoc_advice_pat_subterm match_term explicit_value get_var_link is_var_inst next_f prod allow_full l1 l2 state]
+(* [match_assoc_advice_pat_subterm match_term explicit_value get_var_link is_var_inst next_f simp_facts prod allow_full l1 l2 state]
    matches the lists [l1] and [l2] modulo associativity. 
    More precisely, it calls [next_f state']  after linking variables in [l1]
    so that [\sigma l1 = left_rest . l2 . right_rest] modulo associativity.
@@ -550,7 +594,7 @@ val match_assoc_advice_subterm :
    [allow_full] is true when [l2] may match the full list [l1], that is,
    [left_rest] and [right_rest] may both be empty. 
 
-   [match_term], [explicit_value], [get_var_link], [is_var_inst], [prod] 
+   [match_term], [explicit_value], [get_var_link], [is_var_inst], [simp_facts], [prod] 
    are as in the function [match_assoc_advice_subterm] above.   
  *)
 
@@ -560,9 +604,10 @@ val match_assoc_advice_pat_subterm :
   (term -> 'a -> (linktype * bool) option) ->
   (term -> bool) ->
   ('a -> 'b) ->
+  simp_facts ->
   funsymb -> bool -> term list -> term list -> 'a -> 'b
 
-(* [match_AC_advice match_term explicit_value get_var_link is_var_inst next_f prod allow_rest_pat allow_full allow_rest l1 l2 state]
+(* [match_AC_advice match_term explicit_value get_var_link is_var_inst next_f simp_facts prod allow_rest_pat allow_full allow_rest l1 l2 state]
    matches the lists [l1] and [l2] modulo AC. 
    When [allow_rest] and [allow_rest_pat] are false, it calls [next_f [] state'] after linking variables in [l1]
    so that [\sigma l1 = l2] modulo AC. 
@@ -579,7 +624,7 @@ val match_assoc_advice_pat_subterm :
    [allow_rest] is true when the pattern in [l1] should match a subterm of 
    the term in [l2], so that some elements of [l2] are allowed to remain unmatched.
 
-   [match_term], [explicit_value], [get_var_link], [is_var_inst], [prod] 
+   [match_term], [explicit_value], [get_var_link], [is_var_inst], [simp_facts], [prod] 
    are as in the function [match_assoc_advice_subterm] above.   
 *)
 
@@ -589,13 +634,14 @@ val match_AC_advice :
   (term -> 'a -> (linktype * bool) option) ->
   (term -> bool) ->
   (term list -> 'a -> 'b) ->
+  simp_facts ->
   funsymb -> bool -> bool -> bool -> term list -> term list -> 'a -> 'b
 
-(* [match_funapp_advice match_term explicit_value get_var_link is_var_inst next_f t t' state]
+(* [match_funapp_advice match_term explicit_value get_var_link is_var_inst next_f simp_facts t t' state]
    matches [t] with [t'] when they are function applications. More precisely,
    it calls [next_f state'] after linking variables in [t] such that [\sigma t = t'].
 
-   [match_term], [explicit_value], [get_var_link], [is_var_inst]
+   [match_term], [explicit_value], [get_var_link], [is_var_inst], [simp_facts]
    are as in the function [match_assoc_advice_subterm] above.   
  *)
 
@@ -603,5 +649,7 @@ val match_funapp_advice :
   (('a -> 'b) -> term -> term -> 'a -> 'b) ->
   (term -> 'a -> 'a) ->
   (term -> 'a -> (linktype * bool) option) ->
-  (term -> bool) -> ('a -> 'b) -> term -> term -> 'a -> 'b
+  (term -> bool) -> ('a -> 'b) -> 
+  simp_facts ->
+  term -> term -> 'a -> 'b
 

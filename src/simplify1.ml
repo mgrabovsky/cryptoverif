@@ -90,7 +90,7 @@ let any_term_binder t =
 		   true_facts_at_def = [];
 		   def_vars_at_def = [];
 		   elsefind_facts_at_def = [];
-		   future_binders = []; future_true_facts = [];
+		   future_binders = []; future_true_facts = []; n_compatible = Terms.compatible_empty;
 		   definition = DNone }
   in
   b'.def <- [node];
@@ -152,7 +152,7 @@ let get_var_link t () =
     Var (v,[]) when v.sname==any_term_name -> Some(v.link, true)
   | ReplIndex (v) -> Some(v.ri_link, false)
   | _ -> None
-
+    
 let rec match_term3 next_f t t' () = 
   ri_auto_cleanup_failure (fun () ->
     match t.t_desc, t'.t_desc with
@@ -170,7 +170,7 @@ let rec match_term3 next_f t t' () =
     | Var(b,l), Var(b',l') when b == b' -> 
 	Terms.match_term_list match_term3 next_f l l' ()
     | FunApp(f,l), FunApp(f',l') when f == f' ->
-	Terms.match_funapp match_term3 get_var_link Terms.default_match_error Terms.try_no_var_id next_f t t' ()
+	Terms.match_funapp match_term3 get_var_link Terms.default_match_error Terms.simp_facts_id next_f t t' ()
     | _ -> raise NoMatch
 	  )
 
@@ -180,13 +180,13 @@ let matches_pair t1 t2 t1' t2' =
     true
   with NoMatch -> false
 
-let matches_pair_with_order_ass order_assumptions t1 t2 order_assumptions' t1' t2' =
+let matches_pair_with_order_ass order_assumptions side_condition t1 t2 order_assumptions' side_condition' t1' t2' =
   try 
     if (order_assumptions != []) && (order_assumptions' == []) then
       false
     else
       begin
-	match_term3 (match_term3 (fun () -> 
+	match_term3 (match_term3 (match_term3 (fun () -> 
 	  let order_assumptions_instance = List.map (fun (br1,br2) ->
 	    (Terms.copy_term Terms.Links_RI (Terms.term_from_binderref br1),
 	     Terms.copy_term Terms.Links_RI (Terms.term_from_binderref br2))) order_assumptions
@@ -200,7 +200,7 @@ let matches_pair_with_order_ass order_assumptions t1 t2 order_assumptions' t1' t
 		List.exists (fun (br1',br2') ->
 		  (Terms.equal_terms br1 br1') && (Terms.equal_terms br2 br2')) order_assumptions') order_assumptions_instance)
 	  then raise NoMatch
-	      ) t2 t2') t1 t1' ();
+	      ) side_condition side_condition') t2 t2') t1 t1' ();
 	true
       end
   with NoMatch -> false
@@ -313,16 +313,16 @@ This is more general than the two collisions and yields the same cardinal
 as t1 = t2. *)
 
 let matches 
-    (order_assumptions, true_facts, used_indices, initial_indices, really_used_indices, t1, t2, b, lopt, tl)
-    (order_assumptions', true_facts', used_indices', initial_indices', really_used_indices', t1', t2', b', lopt', tl') =
+    (order_assumptions, side_condition, true_facts, used_indices, initial_indices, really_used_indices, t1, t2, b, lopt, tl)
+    (order_assumptions', side_condition', true_facts', used_indices', initial_indices', really_used_indices', t1', t2', b', lopt', tl') =
   ri_auto_cleanup (fun () -> 
-    if matches_pair_with_order_ass order_assumptions t1 t2 order_assumptions' t1' t2' then
+    if matches_pair_with_order_ass order_assumptions side_condition t1 t2 order_assumptions' side_condition' t1' t2' then
       let common_facts = List.filter (fun f -> List.exists (fun f' -> eq_terms3 f f') true_facts') true_facts in
       ri_cleanup();
       (* Check that we can remove the same indices using common_facts as with all facts *)
       if initial_indices == really_used_indices then
 	(* If we removed no index, this is certainly true *)
-	Some(order_assumptions, common_facts, used_indices, initial_indices, really_used_indices, t1, t2, b, lopt, tl)
+	Some(order_assumptions, side_condition, common_facts, used_indices, initial_indices, really_used_indices, t1, t2, b, lopt, tl)
       else
       let really_used_indices'' = filter_indices_coll common_facts used_indices initial_indices in
       if Terms.equal_lists (==) really_used_indices really_used_indices'' then
@@ -336,7 +336,7 @@ let matches
 	  print_string "Common facts:\n";
 	  List.iter (fun t ->
 	    Display.display_term t; print_newline()) common_facts; *)
-	  Some(order_assumptions, common_facts, used_indices, initial_indices, really_used_indices, t1, t2, b, lopt, tl)
+	  Some(order_assumptions, side_condition, common_facts, used_indices, initial_indices, really_used_indices, t1, t2, b, lopt, tl)
 	end
       else
 	begin
@@ -372,7 +372,7 @@ let matches
     else
       None)
 
-let add_term_collisions (cur_array, true_facts, order_assumptions) t1 t2 b lopt tl =
+let add_term_collisions (cur_array, true_facts, order_assumptions, side_condition) t1 t2 b lopt tl =
   (* Add the indices of t1,t2 to all_indices; some of them may be missing
      initially because array indices in t1,t2 that depend on "bad" variables
      are replaced with fresh indices, and these indices are not included in
@@ -394,7 +394,7 @@ let add_term_collisions (cur_array, true_facts, order_assumptions) t1 t2 b lopt 
     if List.for_all (fun t -> 
       Proba.is_small_enough_coll_elim (used_indices, t)
 	) tl then 
-      (order_assumptions, [], used_indices, used_indices, used_indices, t1, t2, b, lopt, tl)
+      (order_assumptions, side_condition, [], used_indices, used_indices, used_indices, t1, t2, b, lopt, tl)
     else
       (* Try to reduce the list of used indices. 
 	 The initial list of indices is a reordering of the list of all indices.
@@ -423,7 +423,7 @@ let add_term_collisions (cur_array, true_facts, order_assumptions) t1 t2 b lopt 
       if List.for_all (fun t -> 
 	Proba.is_small_enough_coll_elim (really_used_indices, t)
 	  ) tl then 
-	(order_assumptions, true_facts, used_indices, initial_indices, really_used_indices, t1, t2, b, lopt, tl) 
+	(order_assumptions, side_condition, true_facts, used_indices, initial_indices, really_used_indices, t1, t2, b, lopt, tl) 
       else
 	(* Raises NoMatch when the probability is too large to be accepted *)
 	raise NoMatch
@@ -453,7 +453,7 @@ let add_term_collisions (cur_array, true_facts, order_assumptions) t1 t2 b lopt 
   with NoMatch -> 
     false
 
-let proba_for_term_collision (order_assumptions, _, _, _, really_used_indices, t1, t2, b, lopt, tl) =
+let proba_for_term_collision (order_assumptions, side_condition, _, _, _, really_used_indices, t1, t2, b, lopt, tl) =
   print_string "Eliminated collisions between ";
   Display.display_term t1;
   print_string " and ";
@@ -476,7 +476,13 @@ let proba_for_term_collision (order_assumptions, _, _, _, really_used_indices, t
 	print_string " is defined before ";
 	Display.display_var b1 l1
 	  ) order_assumptions;
-      print_string ", ";
+      print_string ", "
+    end;
+  if not (Terms.is_true side_condition) then
+    begin
+      if order_assumptions != [] then print_string "and " else print_string "assuming ";
+      Display.display_term side_condition;
+      print_string ", "
     end;
   Display.display_term t1;
   print_string " characterizes a part of ";
@@ -497,7 +503,7 @@ let proba_for_term_collision (order_assumptions, _, _, _, really_used_indices, t
   end;
   print_string ")\n";
   p
-
+  
 
 (* Final addition of probabilities *)
 
@@ -509,12 +515,20 @@ let final_add_proba() =
    and M2 does not depend on x, then M1 = M2 fails up to
    negligible probability.
    The module FindCompos defines "characterize"
-   The modules DepAnal1 and DepAnal2 perform dependency analyses
-   Function dependency_collision concludes *)
+   The modules Transf_globaldepanal and Transf_simplify.DepAnal2 perform dependency analyses
+   Function Transf_simplify.dependency_collision concludes *)
 
 module FindCompos : sig
 
 type status = Compos | Decompos | Any
+(* The status is
+   - [Compos] when a term [t] is obtained from a variable [b0] by first applying
+     poly-injective functions (functions marked [compos]), then
+     functions that extract a part of their argument 
+     (functions marked [uniform]).
+   - [Decompos] when [t] is obtained from [b0] by applying functions
+     that extract a part of their argument (functions marked [uniform])
+   - [Any] in the other cases *)
 
 type charac_type =
     CharacType of typet
@@ -531,22 +545,53 @@ type 'a depinfo =
 	 nodep is a list of terms that are guaranteed not to depend on x[l].
 	 *)
 
+(* [init_elem] is the empty dependency information *)
 val init_elem : 'a depinfo
 
+(* [depends (b, depinfo) t] returns [true] when the term [t]
+   may depend on the variable [b]. 
+   [depinfo] is the dependency information for variable [b]. *)
 val depends : (binder * 'a depinfo) -> term -> bool
 
-  (* is_indep (b, depinfo) t returns a term independent of b
-     in which some array indexes in t may have been replaced with
-     fresh replication indexes. When t depends on b by variables
-     that are not array indexes, raise Not_found *)
+(* [is_indep (b, depinfo) t] returns a term independent of [b]
+   in which some array indices in [t] may have been replaced with
+   fresh replication indices. When [t] depends on [b] by variables
+   that are not array indices, it raises [Not_found] *)
 val is_indep : (binder * 'a depinfo) -> term -> term
 
+(* [remove_dep_array_index (b, depinfo) t] returns a modified 
+   version of [t] in which the array indices that depend on [b]
+   are replaced with fresh indices.
+   [depinfo] is the dependency information for variable [b].*)
 val remove_dep_array_index : (binder * 'a depinfo) -> term -> term
+
+(* [remove_array_index t] returns a modified version of [t] in which
+   the array indices that are not replication indices are replaced
+   with fresh indices. *) 
 val remove_array_index : term -> term
 
-val find_compos : ((binder * (status * 'a)) -> term list -> (status * charac_type) option) -> 'a depinfo -> (binder * (status * 'a)) -> term -> (status * charac_type * term) option
+(* [find_compos check (b0, depinfo) ((b,(st,_)) as b_st) t] returns
+   [Some(st', c, t')] when it could show that [t] characterizes a part of
+   [b] (which itself characterizes a part of [b0]).
+   [st'] is the status of [t] (Compos or Decompos; see above their meaning).
+   [c] determines the type of the part of [b0] that [t] characterizes.
+   [t'] is a modified version of [t] in which the parts that are not useful
+   to show that [t] characterizes a part of [b] are replaced with variables [?].
+   It returns [None] otherwise.
 
-val find_compos_list : ((binder * (status * 'a)) -> term list -> (status * charac_type) option) -> 'a depinfo -> (binder * (status * 'a)) list -> term -> (status * charac_type * term * binder * 'a) option
+   [check] is a function that checks the validity of the indices of [b] inside [t]:
+   [check b_st l] is called when [l] contains the array indices of [b] in [t];
+   it returns [Some(st,c')] when these array indices are accepted; 
+   [st] is the status of [b];
+   [c'] determines the type of the part of [b0] that [b] characterizes.
+   It returns [None] otherwise. *)
+val find_compos : ((binder * (status * 'a)) -> term list -> (status * charac_type) option) -> (binder * 'a depinfo) -> (binder * (status * 'a)) -> term -> (status * charac_type * term) option
+
+(* [find_compos_list] is the same as [find_compos] but for a list of variables
+   instead of a single variable [((b,(st,_)) as b_st)]. 
+   It tries each variable in turn until it finds one for which [find_compos]
+   succeeds. *)
+val find_compos_list : ((binder * (status * 'a)) -> term list -> (status * charac_type) option) -> (binder * 'a depinfo) -> (binder * (status * 'a)) list -> term -> (status * charac_type * term * binder * 'a) option
 
 end
 =
@@ -629,7 +674,7 @@ let rec apply_statements_at_root_once t = function
   | ([], _, redl, Zero, redr)::other_statements ->
       begin
 	try
-	  Facts.match_term Terms.try_no_var_id [] (fun () -> 
+	  Facts.match_term Terms.simp_facts_id [] (fun () -> 
 	    let t' = Terms.copy_term Terms.Links_Vars redr in
 	    Terms.cleanup();
 	    reduced := true;
@@ -645,7 +690,7 @@ let rec apply_statements_at_root_once t = function
    applies statements only at the root of the term *)
 let rec apply_eq_statements_at_root t =
   reduced := false;
-  let t' = Terms.apply_eq_reds Terms.try_no_var_id reduced t in
+  let t' = Terms.apply_eq_reds Terms.simp_facts_id reduced t in
   if !reduced then apply_eq_statements_at_root t' else 
   let t' =  
     match t.t_desc with
@@ -677,7 +722,7 @@ let rec find_decompos_bin check ((b,_) as b_st) b' t t' =
       (f.f_options land Settings.fopt_UNIFORM) != 0  && (f == f') ->
       List.exists2 (find_decompos_bin check b_st b') l l'
   | _ -> false)
-
+  
 let rec find_compos_bin check ((b,(st,_)) as b_st) b' fact =
   match fact.t_desc with
    FunApp(f,[t1;t2]) when f.f_cat == Equal ->
@@ -704,7 +749,7 @@ let rec find_compos_bin check ((b,(st,_)) as b_st) b' fact =
 	| x -> x
       end
   | _ -> None
-
+    
 and find_compos_bin_l check b_st b' l1 l2 =
   match (l1,l2) with
     [],[] -> None
@@ -715,7 +760,7 @@ and find_compos_bin_l check b_st b' l1 l2 =
       |	Some(_, charac_type) -> Some(Compos,charac_type)
       end
   | _ -> Parsing_helper.internal_error "Lists of different lengths in find_compos_bin_l"
-
+      
 let rec subst depinfo assql t =
   Terms.build_term2 t 
      (match t.t_desc with
@@ -724,7 +769,7 @@ let rec subst depinfo assql t =
 	  (try List.assq b (!assql) with Not_found ->
             (* Do not rename variables that do not depend on the
 	       variable argument of find_compos *)
-	    if (Terms.is_restr b) ||
+	    if (Terms.is_restr b) (* Restrictions (other than the main variable, which is already present in the association list assql) do not depend on the argument of find_compos *)|| 
 	       (match depinfo with
 	         (Some dl,tl) ->
 		   (not (List.exists (fun (b',_) -> b' == b) dl)) ||
@@ -746,7 +791,7 @@ let rec find_decompos check ((b, _) as b_st) t =
       List.exists (find_decompos check b_st) l
   | _ -> false)
 
-let rec find_compos check depinfo ((b,(st,_)) as b_st) t =
+let rec find_compos check (main_var, depinfo) ((b,(st,_)) as b_st) t =
   if (!Settings.debug_simplif_add_facts) then
     begin
       print_string "find_compos:t=";
@@ -764,7 +809,7 @@ let rec find_compos check depinfo ((b,(st,_)) as b_st) t =
       end
   | FunApp(f,l) when (f.f_options land Settings.fopt_COMPOS) != 0 ->
       begin
-	match find_compos_l check depinfo b_st l with
+	match find_compos_l check (main_var, depinfo) b_st l with
 	  None -> None
 	| Some(st, ch_ty, l') -> 
 	    Some(st, ch_ty, Terms.build_term2 t (FunApp(f,l')))
@@ -782,7 +827,13 @@ let rec find_compos check depinfo ((b,(st,_)) as b_st) t =
 	 *)
       let vcounter = !Terms.vcounter in
       let b' = Terms.new_binder b in
-      let t' = subst depinfo (ref [(b, b')]) t in
+      let init_subst = 
+	if main_var == b then 
+	  [(b,b')] 
+	else
+	  [(main_var, Terms.new_binder main_var); (b,b')]
+      in
+      let t' = subst depinfo (ref init_subst) t in
       if (!Settings.debug_simplif_add_facts) then
         begin
           print_string "_->b'=";
@@ -802,23 +853,23 @@ let rec find_compos check depinfo ((b,(st,_)) as b_st) t =
       Terms.vcounter := vcounter; (* Forget created variables *)
       r
 
-and find_compos_l check depinfo b_st = function
+and find_compos_l check var_depinfo b_st = function
     [] -> None
   | (a::l) ->
-      match find_compos check depinfo b_st a with
+      match find_compos check var_depinfo b_st a with
 	None -> 
 	  begin
-	    match find_compos_l check depinfo b_st l with
+	    match find_compos_l check var_depinfo b_st l with
 	      None -> None
 	    | Some(st, charac_type, l') -> Some(st, charac_type, (any_term a)::l')
 	  end
       |	Some(_, charac_type, a') -> Some(Compos,charac_type, a'::List.map any_term l)
 
-let find_compos_list check depinfo seen_list t =
+let find_compos_list check var_depinfo seen_list t =
   let rec test_l = function
     [] -> None
   | (((b, (st, x)) as b_st)::l) -> 
-      match find_compos check depinfo b_st t with
+      match find_compos check var_depinfo b_st t with
 	None -> test_l l
       |	Some(st,charac_type,t') -> Some(st,charac_type,t',b,x)
   in
@@ -837,7 +888,7 @@ let rec match_term2 next_f simp_facts bl t t' =
 	  raise NoMatch;
 	match v.ri_link with
 	  NoLink -> ri_link v (TLink t')
-	| TLink t -> if not (Terms.simp_equal_terms (Facts.try_no_var simp_facts) t t') then raise NoMatch
+	| TLink t -> if not (Terms.simp_equal_terms simp_facts true t t') then raise NoMatch
       end;
       next_f ()
   | ReplIndex(v) ->
@@ -885,7 +936,7 @@ let rec match_among_list next_match simp_facts bl def_vars = function
       match_among (fun () -> 
 	match_among_list next_match simp_facts bl def_vars brl) 
 	simp_facts bl br1 def_vars
-
+  
 
 let final_next dep_info bl true_facts t () =
   let t' = Terms.copy_term Terms.Links_RI t in
@@ -994,7 +1045,7 @@ let true_facts_from_simp_facts (facts, subst, else_find) =
   subst @ facts
 
 let rec try_no_var_rec simp_facts t =
-  let t' = Facts.try_no_var simp_facts t in(* Risk of non-termination? *)
+  let t' = Terms.try_no_var simp_facts t in(* Risk of non-termination? *)
   match t'.t_desc with
     FunApp(f,l) -> 
       Terms.build_term2 t' (FunApp(f, List.map (try_no_var_rec simp_facts) l))
@@ -1016,12 +1067,12 @@ let is_in_bl bl t =
 (* Dependency analysis that takes into account assumption on the
    definition order
 
-   dep_info = (array ref defined later; list of array ref defined before)
+   dep_info = (list of array ref defined later; list of array ref defined before)
  *)
 
-let rec dependency_collision_rec2bis cur_array true_facts order_assumptions (((b_after, l_after), defl_before) as dep_info) t1 t2 t =
+let rec dependency_collision_rec2bis cur_array true_facts order_assumptions ((defl_after, defl_before) as dep_info) t1 t2 t =
   match t.t_desc with
-    Var(b,l) when (Terms.is_restr b) && (b == b_after) && (List.for_all2 Terms.equal_terms l l_after) && (Proba.is_large_term t) ->
+    Var(b,l) when (Terms.is_restr b) && (Terms.mem_binderref (b,l) defl_after) && (Proba.is_large_term t) ->
       begin
         if (!Settings.debug_elsefind_facts) then
           begin
@@ -1030,7 +1081,7 @@ let rec dependency_collision_rec2bis cur_array true_facts order_assumptions (((b
 	    Display.display_term t1;print_string ", ";
 	    Display.display_term t2;
           end;
-
+          
         let t' = FindCompos.remove_dep_array_index (b,(None, defl_before)) t in
         let l_after' = 
 	  match t'.t_desc with
@@ -1061,7 +1112,7 @@ let rec dependency_collision_rec2bis cur_array true_facts order_assumptions (((b
 	  else
 	    None
 	in
-	match FindCompos.find_compos check (None, defl_before) (b,(FindCompos.Decompos, b.btype)) t1' with
+	match FindCompos.find_compos check (b, (None, defl_before)) (b,(FindCompos.Decompos, b.btype)) t1' with
 	  Some(_, FindCompos.CharacType charac_type, t1'') -> 
 	    begin
 	    try 
@@ -1071,7 +1122,7 @@ let rec dependency_collision_rec2bis cur_array true_facts order_assumptions (((b
                 end;
 	      let t2' = FindCompos.is_indep (b, (None, defl_before)) t2 in
 	      (* add probability, if small enough. returns true if proba small enough, false otherwise *)
-	      add_term_collisions (cur_array, true_facts, order_assumptions) t1'' t2' b (Some l_after') [charac_type]
+	      add_term_collisions (cur_array, true_facts, order_assumptions, Terms.make_true()) t1'' t2' b (Some l_after') [charac_type]
 	    with Not_found -> false
 	    end
 	| Some _ -> Parsing_helper.internal_error "CharacTypeOfVar should not be used in DepAnal2"
@@ -1081,36 +1132,32 @@ let rec dependency_collision_rec2bis cur_array true_facts order_assumptions (((b
       List.exists (dependency_collision_rec2bis cur_array true_facts order_assumptions dep_info t1 t2) l
   | _ -> false
 
-let dependency_collision_order_hyp cur_array order_assumptions dep_info simp_facts t1 t2 = 
+(* Dependency analysis taking into account the order of definition of the variables. 
+   Here dep_info is a list of array ref defined after and a list of array ref defined before *)
+
+let dependency_collision_order_hyp cur_array order_assumptions dep_info simp_facts t1 t2 =
   let t1' = try_no_var_rec simp_facts t1 in
   let t2' = try_no_var_rec simp_facts t2 in
-    if (!Settings.debug_elsefind_facts) then
-      begin
-        print_string "simplified t1,t2=";
-        Display.display_term t1'; print_string ", ";
-        Display.display_term t2'; print_newline ();
-      end;
   let true_facts = true_facts_from_simp_facts simp_facts in
-  (dependency_collision_rec2bis cur_array true_facts order_assumptions dep_info t1' t2' t1') ||
-  (dependency_collision_rec2bis cur_array true_facts order_assumptions dep_info t2' t1' t2')
-
-
-(* Dependency analysis taking into account the order of definition of the variables. Here dep_info is a list of array ref defined after and a list of array ref defined before *)
-
-let dependency_collision_order_hyp' cur_array order_assumptions (defl_after, defl_before) simp_facts t1 t2 =
   if (!Settings.debug_elsefind_facts) then
     begin
-      print_string "dependency_collision_order_hyp': ";
+      print_string "dependency_collision_order_hyp: ";
       Display.display_term t1; print_string ", ";
       Display.display_term t2; print_newline ();
+      print_string "simplified t1,t2=";
+      Display.display_term t1'; print_string ", ";
+      Display.display_term t2'; print_newline ();
     end;
-  let b = List.exists (fun def_after -> dependency_collision_order_hyp cur_array order_assumptions (def_after, defl_before) simp_facts t1 t2) defl_after in
-    if (!Settings.debug_elsefind_facts) then
-      begin
-        print_string (if b then "Result: true" else "Result: false");
-	print_newline ()
-      end;
-    b
+  let b =   
+    (dependency_collision_rec2bis cur_array true_facts order_assumptions dep_info t1' t2' t1') ||
+    (dependency_collision_rec2bis cur_array true_facts order_assumptions dep_info t2' t1' t2')
+  in
+  if (!Settings.debug_elsefind_facts) then
+    begin
+      print_string (if b then "Result: true" else "Result: false");
+      print_newline ()
+    end;
+  if b then Some (Terms.make_false()) else None
 
 (* [above_input_node n] returns the first node corresponding to
    an input above [n]. *)
@@ -1121,7 +1168,7 @@ let rec above_input_node n =
   match n.definition with
     DInputProcess _ -> n
   | _ -> above_input_node n.above_node
-
+    
 (* get_elsefind_facts *)
 
 (* this function returns the list of all the binderref that are defined before the node `node' after transformation through the rename_br transformation, and stops if it encounters a binder from stop_binders or if the node is stop_node *)
@@ -1157,7 +1204,7 @@ let rec add_vars_until_binder_or_node node stop_binders stop_node acc =
       )
   else
     (add_vars_until_binder_or_node node.above_node stop_binders stop_node (node.binders @ acc))
-
+  
 
 (* this function is used as the final function for match_among_list *)
 let final_next3 bl def_list t result () =
@@ -1168,16 +1215,22 @@ let final_next3 bl def_list t result () =
   (* Backtrack *)
   raise NoMatch
 
+let final_next4 bl def_list t fact_accu () =
+  ri_auto_cleanup (fun () ->
+    let t' = Terms.copy_term Terms.Links_RI t in
+    fact_accu := (Terms.make_not t')::(!fact_accu));
+  (* Backtrack *)
+  raise NoMatch
+
 (* [get_fact_of_elsefind_fact] collects terms that are true, where
    - the variable b[tl] is known to be defined at the current program point (due to some defined condition of find)
    - the variable b is defined in the else branch of a find, so that 
      [elsefind_fact = (bl,def_list,t1)], which means [forall bl, not (defined(def_list) && t1)] 
      holds just before the definition of b
-   - [all_indices] corresponds to the current [cur_array] plus possibly find indices when we are in a condition of find.
+   - [cur_array] contains the current replication indices
    - [def_vars] are variables known to be defined at the current program point.
    - [simp_facts] are facts known to be true at the current program point.
 
-   - [proba_accu] stores the negligible probability that the proved terms do not hold
    - [term_accu] stores the proved terms
    - [g] is the current game
 
@@ -1191,13 +1244,43 @@ let final_next3 bl def_list t result () =
    * if this succeeds, we can conclude that not(t1) holds in all cases.
 *)
 
-let get_fact_of_elsefind_fact proba_accu term_accu g cur_array def_vars simp_facts (b,tl) ((bl,def_list,t1) as elsefind_fact) =
+let defined_after b b1 =
+  List.for_all (fun n -> List.memq b1 (Terms.add_def_vars_node [] n)) b.def
+
+let rec add_latest ((b,tl) as br) elsefind = function
+    [] -> [(br,elsefind)]
+  | ((b', tl') as br',elsefind')::l ->
+      if (Terms.equal_elsefind_facts elsefind elsefind') && (Terms.equal_term_lists tl tl') then
+	if defined_after b b' then
+	  (br,elsefind)::l
+	else
+	  (br',elsefind')::l
+      else
+	(br',elsefind')::(add_latest br elsefind l)
+
+let rec collect_eff = function
+    [] -> []
+  | br::l ->
+      let last_effl = collect_eff l in
+      let new_effl = 
+	try 
+          Terms.intersect_list Terms.equal_elsefind_facts (List.map (fun n -> n.elsefind_facts_at_def) (fst br).def)
+	with Contradiction -> []
+      in
+      List.fold_right (add_latest br) new_effl last_effl
+
+let get_fact_of_elsefind_fact term_accu g cur_array def_vars simp_facts (b,tl) ((bl,def_list,t1) as elsefind_fact) =
   if (!Settings.debug_elsefind_facts) then
     begin
-      print_string "-----------------\nElsefind_fact (before renaming):\n";
-      Display.display_term (Terms.term_from_binderref (b,tl));
+      print_string "-----------------\n";
+      print_string "Variables known to be currently defined: ";
+      Display.display_list (fun (b,tl) -> Display.display_var b tl) def_vars;
+      print_newline();
+      print_string "Variable known to be defined in an else branch of find: ";
+      Display.display_var b tl;
       print_newline ();
-      Facts.display_facts ([],[],[elsefind_fact])
+      print_string "Elsefind_fact (before renaming): ";
+      Facts.display_elsefind elsefind_fact
     end;
 
   (* decompose def_list into subterms: all *subterms* of def_list must
@@ -1236,10 +1319,8 @@ let get_fact_of_elsefind_fact proba_accu term_accu g cur_array def_vars simp_fac
 
   if (!Settings.debug_elsefind_facts) then
     begin
-      print_string "Elsefind_fact (after renaming):\n";
-      Display.display_term (Terms.term_from_binderref (b,tl));
-      print_newline ();
-      Facts.display_facts ([],[],[(bl,def_list,t1)])
+      print_string "Elsefind_fact (after renaming): ";
+      Facts.display_elsefind (bl,def_list,t1)
     end;
 
   (* We have [elsefind_fact = (bl,def_list,t1)], which means [forall bl, not (defined(def_list) && t1)].
@@ -1251,7 +1332,7 @@ let get_fact_of_elsefind_fact proba_accu term_accu g cur_array def_vars simp_fac
       match_among_list (final_next3 bl def_list t1 result) simp_facts bl def_vars def_list
     with NoMatch -> ()
   end;
-
+    
   List.iter (fun (def_list',t') ->
       if (!Settings.debug_elsefind_facts) then
         begin
@@ -1270,7 +1351,7 @@ let get_fact_of_elsefind_fact proba_accu term_accu g cur_array def_vars simp_fac
 	 if br is defined after or at (b,tl), t' => Contradiction. *)
 
     (* Variables defined before (b,tl) *)
-    let def_vars = 
+    let def_vars_before = 
       try 
         Terms.subst_def_list b_index tl (Facts.def_vars_from_defined None [Terms.binderref_from_binder b])
       with Contradiction -> 
@@ -1280,10 +1361,9 @@ let get_fact_of_elsefind_fact proba_accu term_accu g cur_array def_vars simp_fac
       if (!Settings.debug_elsefind_facts) then
         begin
           print_string "Elsefind_fact_vars_before:\n";
-          Display.display_list Display.display_term (List.map Terms.term_from_binderref def_vars);
+          Display.display_list Display.display_term (List.map Terms.term_from_binderref def_vars_before);
           print_newline ()
         end;
-      if proba_accu != None then reset [] g;
       if (
         List.for_all (fun br ->
           (* Let us suppose that br has been defined after or at (b,tl) *)
@@ -1298,18 +1378,18 @@ let get_fact_of_elsefind_fact proba_accu term_accu g cur_array def_vars simp_fac
 
 	  (* If the variable of br is defined at the definition of b, 
 	     remove the variables defined at the same time as (b,tl) and br
-	     from def_vars. (We are not sure that they are defined before br.) *)
+	     from def_vars_before. (We are not sure that they are defined before br.) *)
 	  let vars_at_b = List.concat (List.map (fun n -> n.binders) b.def) in
-	  let def_vars = 
+	  let def_vars_before = 
 	    if List.memq (fst br) vars_at_b then
-	      Terms.setminus_binderref def_vars (List.map (fun b' -> (b', tl)) vars_at_b)
+	      Terms.setminus_binderref def_vars_before (List.map (fun b' -> (b', tl)) vars_at_b)
 	    else
-	      def_vars
+	      def_vars_before
 	  in
 
-	  (* If br is in def_vars, br is defined before (b,tl), so the assumption 
+	  (* If br is in def_vars_before, br is defined before (b,tl), so the assumption 
 	     that br is defined after (b,tl) never holds. *)
-	  (Terms.mem_binderref br def_vars) || (
+	  (Terms.mem_binderref br def_vars_before) || (
           let order_assumptions = [br,(b,tl)] in
           List.for_all (fun n -> (* for each definition def_node of br *)
             try
@@ -1318,25 +1398,42 @@ let get_fact_of_elsefind_fact proba_accu term_accu g cur_array def_vars simp_fac
 		   point and the definition of br and after another definition of (b,_). *)
               let future_binders = add_vars_until_binder_or_node n [b] (above_input_node n) n.future_binders in
 	      let future_vars = Terms.subst_def_list (fst br).args_at_creation (snd br) (List.map Terms.binderref_from_binder future_binders) in
-                if (!Settings.debug_elsefind_facts) then
-                  begin
-                    print_string "Elsefind_fact_future_vars:\n";
-                    Display.display_list Display.display_term (List.map Terms.term_from_binderref future_vars);
-                    print_newline ()
-                  end;
 
-	      (* Elements of future_vars are defined after those of def_vars;
-	         If they are in def_vars, that's a contradiction *)
-	      if List.exists (fun future_br -> Terms.mem_binderref future_br def_vars) future_vars then
+	      (* Variables in [def_vars] are known to be defined.
+                 If they cannot be defined before [(b,tl)] or a binderref 
+		 already in [future_vars], then they
+	         are certainly defined after [(b,tl)], so we can add them
+	         to [future_vars] *)
+	      let future_vars = 
+		List.fold_left (fun future_vars br' ->
+		  if (not (Terms.may_def_before br' (b,tl) &&
+			   List.for_all (Terms.may_def_before br') future_vars)) &&
+		     (not (Terms.mem_binderref br' future_vars)) 
+		  then
+		    br' :: future_vars
+		  else
+		    future_vars) future_vars def_vars
+	      in
+
+              if (!Settings.debug_elsefind_facts) then
+                begin
+                  print_string "Elsefind_fact_future_vars:\n";
+                  Display.display_list Display.display_term (List.map Terms.term_from_binderref future_vars);
+                  print_newline ()
+                end;
+
+	      (* Elements of future_vars are defined after those of def_vars_before;
+	         If they are in def_vars_before, that's a contradiction *)
+	      if List.exists (fun future_br -> Terms.mem_binderref future_br def_vars_before) future_vars then
 		raise Contradiction;
 
 	      (* Since br is defined after (b,tl), all elements of future_vars are defined after (b,tl).
-		 The elements of def_vars are defined before (b,tl), so before the elements
+		 The elements of def_vars_before are defined before (b,tl), so before the elements
 		 of future_vars. 
-		 Therefore, the elements of def_vars are independent of the elements of future_vars
+		 Therefore, the elements of def_vars_before are independent of the elements of future_vars
 		 that are randomly chosen. *)
-              let dep_info = (future_vars, List.map Terms.term_from_binderref def_vars) in
-
+              let dep_info = (future_vars, List.map Terms.term_from_binderref def_vars_before) in
+     
                 if (!Settings.debug_elsefind_facts) then
                   begin
                     print_string "--Args to dependency_collision:\n";
@@ -1356,9 +1453,40 @@ let get_fact_of_elsefind_fact proba_accu term_accu g cur_array def_vars simp_fac
                     print_string "\n--End of args"; print_newline ();
                     Settings.debug_simplif_add_facts := true;
                   end;
+           
+	      (* Get additional facts using again elsefind facts.
+		 If an elsefind fact (bl, def_list, t1) holds at the
+		 definition of b'[tl'] in future_vars, that is,
+		 at the definition of b'[tl'], we have
+		   forall bl, not (defined(def_list) && t1)
+		 and furthermore all elements of def_list are in 
+		 def_vars_before, so all elements of def_list are defined
+		 at the definition of b[tl], so a fortiori at the
+		 definition of b'[tl'], then we have not(t1). *)
 
               let (subst, facts, _) = simp_facts in
-              let (_,_,_) = Facts.simplif_add_list (dependency_collision_order_hyp' cur_array order_assumptions dep_info) ([],[],[]) (t'::(subst@facts)) in
+	      let fact_accu = ref (subst@facts) in
+	      let elsefind_facts = collect_eff future_vars in
+	      List.iter (fun ((b',tl'), (bl, def_list, t1)) ->
+		(* The "elsefind" fact (bl, def_list, t1) holds
+		   at the definition of b', and I know that b'[tl'] is defined *)
+
+		(* Rename indices b'.args_at_creation -> tl *)
+		let def_list = Terms.subst_def_list b'.args_at_creation tl' def_list in
+		let t1 = Terms.subst b'.args_at_creation tl' t1 in
+
+                (* We add to [fact_accu] the facts [not t'] where the pairs 
+		   (def_list', t') are instances of (def_list, t1) such that
+		   the elements of [def_list'] are defined at the definition of b[tl]. 
+		   (They are in [def_vars_before].) *)
+		begin
+		  try 
+		    match_among_list (final_next4 bl def_list t1 fact_accu) simp_facts bl def_vars_before def_list
+		  with NoMatch -> ()
+		end;
+		  ) elsefind_facts;
+
+              let (_,_,_) = Facts.simplif_add_list (dependency_collision_order_hyp cur_array order_assumptions dep_info) ([],[],[]) (t'::(!fact_accu)) in
                 if (!Settings.debug_elsefind_facts) then
                   begin
                     Settings.debug_simplif_add_facts := false;
@@ -1383,25 +1511,12 @@ let get_fact_of_elsefind_fact proba_accu term_accu g cur_array def_vars simp_fac
           (* The term (not t') is true, add it *)
           let t = Terms.make_not t' in
           term_accu := t :: (!term_accu);
-	  match proba_accu with
-	    None -> 
-              if (!Settings.debug_elsefind_facts) then
-		begin
-		  print_string "Found a usable term: ";
-		  Display.display_term t;
-		  print_newline ()
-		end
-	  | Some proba_ref ->
-              let proba = final_add_proba() in
-              if (!Settings.debug_elsefind_facts) then
-		begin
-		  print_string "Found a usable term: ";
-		  Display.display_term t;
-		  print_string " with probability ";
-		  Display.display_set proba;
-		  print_newline ()
-		end;
-	      proba_ref := proba @ (!proba_ref)
+          if (!Settings.debug_elsefind_facts) then
+	    begin
+	      print_string "Found a usable term: ";
+	      Display.display_term t;
+	      print_newline ()
+	    end
         end
       else
         begin
@@ -1414,50 +1529,25 @@ let get_fact_of_elsefind_fact proba_accu term_accu g cur_array def_vars simp_fac
 	  ) (!result)
 
 
-let defined_after b b1 =
-  List.for_all (fun n -> List.memq b1 (Terms.add_def_vars_node [] n)) b.def
-
-let rec add_latest ((b,tl) as br) elsefind = function
-    [] -> [(br,elsefind)]
-  | ((b', tl') as br',elsefind')::l ->
-      if (Terms.equal_elsefind_facts elsefind elsefind') && (Terms.equal_term_lists tl tl') then
-	if defined_after b b' then
-	  (br,elsefind)::l
-	else
-	  (br',elsefind')::l
-      else
-	(br',elsefind')::(add_latest br elsefind l)
-
-let rec collect_eff = function
-    [] -> []
-  | br::l ->
-      let last_effl = collect_eff l in
-      let new_effl = 
-	try 
-          Terms.intersect_list Terms.equal_elsefind_facts (List.map (fun n -> n.elsefind_facts_at_def) (fst br).def)
-	with Contradiction -> []
-      in
-      List.fold_right (add_latest br) new_effl last_effl
-
-let get_facts_of_elsefind_facts g cur_array return_proba simp_facts def_vars_orig def_list =
+let get_facts_of_elsefind_facts g cur_array simp_facts def_vars =
   if (!Settings.debug_elsefind_facts) then
     begin
       print_string "__________________\n";
       print_string "Elsefind begin\n";
       print_newline ()
     end; 
-  let def_vars = 
-    try 
-      Terms.setminus_binderref (Facts.def_vars_from_defined None def_list) def_vars_orig
-    with Contradiction ->
-      (* A contradiction may happen when the variables in def_list can in fact not be defined *)
-      []
-  in
-  let def_vars_current = def_vars_orig @ def_vars in
-  let proba_accu = if return_proba then Some (ref []) else None in
+(*  print_string "Defined variables original:\n";
+  List.iter (fun (b,l) -> Display.display_var b l; print_newline()) def_vars; *)
+  let def_vars_tmp = ref [] in
+  List.iter (fun (b,l) ->
+    let br' = (b, List.map (Terms.try_no_var simp_facts) l) in
+    Terms.add_binderref br' def_vars_tmp) def_vars;
+  let def_vars = !def_vars_tmp in
+(*  print_string "Defined variables simplified:\n";
+  List.iter (fun (b,l) -> Display.display_var b l; print_newline()) def_vars; *)
   let term_accu = ref [] in
   let effl = collect_eff def_vars in
-  List.iter (fun (br, eff) -> get_fact_of_elsefind_fact proba_accu term_accu g cur_array def_vars_current simp_facts br eff) effl;
+  List.iter (fun (br, eff) -> get_fact_of_elsefind_fact term_accu g cur_array def_vars simp_facts br eff) effl;
   if (!Settings.debug_elsefind_facts) then
     begin
       print_string "__________________\n";
@@ -1465,7 +1555,7 @@ let get_facts_of_elsefind_facts g cur_array return_proba simp_facts def_vars_ori
       Display.display_list Display.display_term (!term_accu);
       print_newline ()
     end;
-  (!term_accu),(match proba_accu with None -> [] | Some proba_ref -> !proba_ref)
+  (!term_accu)
 
 
 (***** Filter out the indices that are unique knowing other indices *****

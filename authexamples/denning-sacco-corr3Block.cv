@@ -55,8 +55,7 @@ proof {
   crypto ind_cca2(enc) rkB;
   crypto uf_cma(sign) rkS;
   crypto uf_cma(sign) rkA;
-  success;
-  auto
+  success
 }
 
 (*

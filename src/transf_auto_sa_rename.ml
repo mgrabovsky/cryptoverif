@@ -58,7 +58,7 @@ open Types
 *)
 
 let done_sa_rename = ref []
-
+      
 let new_binder b =
   if Terms.has_array_ref_q b then
     Parsing_helper.internal_error ("Variable " ^ (Display.binder_to_string b) ^ " is defined in a condition of find; it should have no array reference.");

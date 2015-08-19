@@ -54,13 +54,9 @@ open Types
    can be used as facts *)
 val filter_ifletfindres : term list -> term list
 
-(* [try_no_var facts t] tries to transform [t] into a term that
-   is not a variable, using the equalities in [facts] *)
-val try_no_var : simp_facts -> term -> term
-
 (* match_term is an intermediate function used for apply_reds. It is exported
    because we need to compute a variant of apply_reds in dependency analyses. *)
-val match_term : (term -> term) -> binder list -> (unit -> 'a) -> term -> term -> unit -> 'a
+val match_term : simp_facts -> binder list -> (unit -> 'a) -> term -> term -> unit -> 'a
 
 (* set to true by the functions below when they reduce the term *)
 val reduced : bool ref
@@ -74,13 +70,13 @@ val reduced : bool ref
    when [t] has really been modified.
    [try_no_var t] must simplify the term [t] by replacing variables
    with their values according to currently known facts. *)
-val apply_eq_statements_and_collisions_subterms_once : (term -> term -> term) -> (term -> term) -> term -> term
+val apply_eq_statements_and_collisions_subterms_once : (term -> term -> term) -> simp_facts -> term -> term
 
 (* [apply_eq_statements_subterms_once try_no_var t] simplifies
    the term [t] using the equalities coming from the
    equational theories and the equality statements given in the input file.
    [try_no_var] is as above. *)
-val apply_eq_statements_subterms_once : (term -> term) -> term -> term
+val apply_eq_statements_subterms_once : simp_facts -> term -> term
 
 (* [apply_reds simp_facts t] applies all equalities coming from the
    equational theories, equality statements, and collisions given in
@@ -90,16 +86,19 @@ val apply_eq_statements_subterms_once : (term -> term) -> term -> term
 val apply_reds : simp_facts -> term -> term
 
 (* Display the facts. Mainly used for debugging *)
+val display_elsefind : elsefind_fact -> unit
 val display_facts : simp_facts -> unit
 
 (* A dependency analysis is a function of type 
-   [dep_anal = simp_facts -> term -> term -> bool] 
-   such that [dep_anal facts t1 t2] is true when [t1 != t2] 
+   [dep_anal = simp_facts -> term -> term -> term option] 
+   such that [dep_anal facts t1 t2] is [Some t'] when [t1 = t2] 
+   can be simplified into the term [t']
    up to negligible probability, by eliminating collisions
    between [t1] and [t2] using the results of some dependency analysis.
+   Otherwise, [dep_anal facts t1 t2] returns [None].
 
    [no_dependency_anal] is a particular dependency analysis that
-   does nothing, i.e. always returns false.
+   does nothing, i.e. always returns [None].
    Other dependency analyses are defined in simplify.ml.
  *)
 val no_dependency_anal : dep_anal
@@ -146,8 +145,8 @@ val def_vars_from_defined : def_node option -> binderref list -> binderref list
    is defined has no definition in the game. *)
 val facts_from_defined : def_node option -> binderref list -> term list
 
-(* Returns fresh array indices for the variable given as argument *)
-val make_indexes : binder -> term list
+(* Returns fresh array indices as replacements for the given array indices *)
+val make_indexes : repl_index list -> term list
 
 (* [get_def_vars_at fact_info] returns the variables that are known
    to be defined given [fact_info].
@@ -167,8 +166,25 @@ val get_facts_at : fact_info -> term list
 val reduced_def_list : fact_info -> binderref list -> binderref list
 
 (* Functions useful to simplify def_list *)
+
+(* [filter_def_list accu l] returns a def_list that contains
+   all elements of [accu] and [l] except the elements whose definition
+   is implied by the definition of some other element of [l].
+   The typical call is [filter_def_list [] l], which returns 
+   a def_list that contains all elements of [l] except 
+   the elements whose definition is implied by the definition 
+   of some other element.*)
 val filter_def_list : binderref list -> binderref list -> binderref list
+
+(* [remove_subterms accu l] returns a def_list that contains
+   all elements of [accu] and [l] except elements that
+   also occur as subterms in [l].
+   The typical call is  [remove_subterms [] l], which returns
+   [l] with elements that occur as subterms removed. *)
 val remove_subterms : binderref list -> binderref list -> binderref list
+
+(* [eq_deflists dl dl'] returns true when the two def_list [dl]
+   and [dl'] are equal (by checking mutual inclusion) *)
 val eq_deflists : binderref list -> binderref list -> bool
 
 (* 3. Some rich functions that rely on collecting facts and reasoning 
@@ -183,33 +199,31 @@ val eq_deflists : binderref list -> binderref list -> bool
 *)
 val check_distinct : binder -> game -> bool * setf list
 
-(* [check_corresp corresp internal_info g] returns true when the
+(* [check_corresp event_accu corresp g] returns true when the
    correspondence [corresp] is proved (up to negligible probability).
    It is called from success.ml. [g] is the full game. In addition to the
    boolean result, when it is true, it also returns the probability of
    collisions eliminated to reach that result. *)
-val check_corresp : (bool * term) list * qterm -> game -> bool * setf list
+val check_corresp : 
+    (Types.term * (Types.term list * Types.binderref list * Types.def_node) option) list -> 
+    (bool * term) list * qterm -> game -> bool * setf list
 
 (* [simplify_term dep_anal facts t] returns a simplified form of
    the term [t] using the dependency analysis [dep_anal] and the
    true facts [facts]. *)
 val simplify_term : dep_anal -> simp_facts -> term -> term
 
-(* [check_equal g t t' facts] returns true when [t] and [t'] are
-   proved equal when the terms in [facts] are true (up to negligible
-   probability. It is called from insertinstruct.ml. [g] is the full
-   game.  [t] is supposed to be a term of the game [g], [t'] is a
-   candidate replacement for [t]. In addition to the boolean result,
-   when it is true, it also returns the probability of collisions
-   eliminated to reach that result and the updated eliminated
-   collisions.  Terms.build_def_process must have been called so that
-   t.t_facts has been filled. *)
-val check_equal : game -> term -> term -> term list -> setf list -> bool * setf list
+(* [check_equal t t' simp_facts] returns true when [t] and [t'] are
+   proved equal when the facts in [simp_facts] are true.
+   It is called from transf_insert_replace.ml. The probability of collisions
+   eliminated to reach that result is taken into account by module [Proba]. *)
+val check_equal : term -> term -> simp_facts -> bool
 
 (* [is_reachable n n'] returns true when [n] is reachable from [n'],
    that is, the variable defined at [n] is defined above than the one 
    defined at [n']. *)
 val is_reachable : def_node -> def_node -> bool
 
-
+(* [display_facts_at p occ] displays the facts that are known
+   to hold at the program point [occ] of the process [p]. *)
 val display_facts_at : inputprocess -> int -> unit

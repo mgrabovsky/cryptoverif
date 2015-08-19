@@ -69,8 +69,7 @@ crypto sprp(enc) rKbs;
 crypto sprp(enc) rKas;
 show_game;
 SArename "@7_r2_115";
-success;
-auto
+success
 }
 
 param N.

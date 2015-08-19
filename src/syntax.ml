@@ -1432,7 +1432,7 @@ let rec check_term_nobe env = function
               match f.f_cat with
                   LetFunTerm _ -> input_error ("Letfun are not accepted here") ext
                 | _->
-
+                    
 	            check_type_list ext2 tl tl' (fst f.f_type);
 	            { t_desc = FunApp(f, tl'); t_type = snd f.f_type; t_occ = new_occ(); t_loc = ext2; t_facts = None }
             end
@@ -1673,7 +1673,7 @@ let rec check_term_proba env = function
   of the left-hand side of the equivalence. (In such a case, no expression
   can instantiate all variables, so it will always have result 0, which
   is not the desired behaviour!) *)
-
+      
 (* returns the checked formula and its dimension as a power of probability
    and a power of time *)
 let get_compatible ext d1 d2 =
@@ -1723,7 +1723,7 @@ let rec check_types ext pl0 pl tl =
 			   "where p1...pn are probabilities pi ::= maxlength(ti) | length(fi, ...) | max(pi,pi)\n" ^
 			   "for terms ti or result of fi of types the non-bounded arguments of f.\n" ^ 
 			   "Type " ^ ty.tname ^ " expected, got " ^ (snd f.f_type).tname ^ ".") ext
-
+	    
 	| _ ->
 	    input_error ("In a probability formula, time/length should be of form time/length(f, p1, ..., pn)\n" ^
 			 "where p1...pn are probabilities pi ::= maxlength(ti) | length(fi, ...) | max(pi,pi)\n" ^
@@ -2531,7 +2531,7 @@ and check_oprocess cur_array env prog = function
         (oproc_from_desc (Get(tbl, patl',topt',p1', p2')),
          mergeres ext tres1 tres2, check_compatible ext oracle1 oracle2,
          oproc_from_desc (Get(tbl, patl',topt',ip1', ip2')))
-
+          
   | PInsert((id,ext),tl,p),ext2 ->
       let tbl = get_table env id ext in
       let t' = List.map (check_term cur_array env) tl in
@@ -2539,10 +2539,10 @@ and check_oprocess cur_array env prog = function
         let (p',tres,oracle,ip') = check_oprocess cur_array env prog p in
           (oproc_from_desc (Insert(tbl, t', p')), tres, oracle,
            oproc_from_desc (Insert(tbl, t', ip')))
-
+            
   | _, ext -> 
       input_error "non-input process expected" ext
-
+        
 (* Macro expansion *)
 
 let rename_table = ref StringMap.empty
@@ -2753,7 +2753,7 @@ let rename_decl = function
   | LetFun(name,l,t) -> 
       LetFun(rename_ie name,List.map (fun (b,t) -> (rename_ie b,rename_ie t)) l,rename_term t)
 
-
+	
 
 let apply argl paraml already_def def =
   rename_table := StringMap.empty;
@@ -2977,7 +2977,7 @@ let rec check_one = function
 				      f_eq_theories = NoEq;
                                       f_impl = No_impl;
                                       f_impl_inv = None })
-
+          
   | EventDecl((s1,ext1), l) ->
       let l' = List.map (fun (s,ext) ->
 	get_type (!env) s ext) l 

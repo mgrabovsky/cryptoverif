@@ -124,12 +124,20 @@ type binder = { sname : string;
 		   (* Pointer to the nodes at which this variable is defined. 
 		      Set by Terms.build_def_process. *)
 		mutable compatible : binderset;
-		   (* Set of variables that can be defined at the same time as
+		   (* Set of variables that can be defined before
                       this variable, with the same indices.
-                      For instance, if the only definitions of b and b' are
+                      - For instance, if the only definitions of b and b' are
                       ! N ... if ... then (let b = ...) else (let b' = ...)
 		      b and b' cannot be defined simultaneously with the same indices,
                       b is not in b'.compatible and b' is not in b.compatible.
+		      - If the only definitions of b and b' are
+                      let b = ... in let b' = ... in ...
+                      then b is defined before b' so, 
+                      b is in b'.compatible but b' is not in b.compatible.
+                      - If the only definitions of b and b' are
+                      (... let b = ... in ...) | (... let b' = ... in ...)
+		      then b and b' can be defined in any order,
+		      so b is in b'.compatible and b' is in b.compatible.
 		      Set by Terms.build_compatible_defs *)
 		mutable link : linktype;
 		   (* Link of the variable to a term. 
@@ -197,6 +205,10 @@ and def_node = { above_node : def_node;
                        the elsefind_fact may no longer hold after the definition
                        of b, but it is still present in elsefind_facts_at_def.) 
 		       *)
+		 mutable n_compatible : binderset;
+		    (* Set of variables whose definition is compatible with
+		       the execution of that node (for replication indices
+		       that are suffix of one another) *)
 		 mutable future_binders : binder list;
 		    (* The variables that are guaranteed to be defined
 		       before we reach the end of the current input...output block.
@@ -367,7 +379,7 @@ and restropt =
     NoOpt | Unchanged | DontKnow
 
 and name_to_discharge_t = (binder * restropt ref) list
-
+    
 and fungroup =
     ReplRestr of repl_index(*replication*) * (binder * restropt) list(*restrictions*) * fungroup list
   | Fun of channel * binder list(*inputs*) * term * (int(*priority*) * options)
@@ -390,7 +402,18 @@ and eqname =
 and game = 
     { mutable proc : inputprocess;
       mutable game_number : int;
-      mutable current_queries : ((query * game) * proof_t ref * proof_t) list }
+      mutable current_queries : ((query * game) * proof_t ref * proof_t) list
+	(* [current_queries] contains, for each query:
+	   [(query, game), proof_ref, proof] where
+	   the query [query] should be proved in game [game],
+	   [proof = None] when it is not proved yet;
+	   [proof = Some(proba, state)] when it is proved up to probability [proba]
+	   using the sequence of games [state].
+	   However, the probability [proba] may depend on the probability of events
+	   introduced during the proof. 
+	   [proof_ref] is set to [proof] when the probability of all these events
+	   has been bounded. Otherwise, [!proof_ref = None]. *)
+    }
 
 and proof_t = (setf list * state) option
 
@@ -423,6 +446,12 @@ and probaf =
   | Maxlength of game * term
   | TypeMaxlength of typet
   | Length of funsymb * probaf list
+
+(* An element of type [setf list] represents a probability
+   computed as the sum of the probabilities [proba] 
+   of all elements [SetProba proba] of the list, plus
+   the probability of the disjunction of all events
+   recorded by elements [SetEvent ...] of the list. *)
 
 and setf =
     SetProba of probaf
@@ -457,7 +486,7 @@ and query =
   | QSecret of binder
   | QEventQ of (bool(*true when injective*) * term) list * qterm
   | AbsentQuery
-
+  
 (* Instructions for modifying games *)
 
 (* For removal of assignments *)
@@ -599,7 +628,7 @@ type trans_res =
   | TFailure of (equiv_nm * binder list * instruct list) list
 
 type simp_facts = term list * term list * elsefind_fact list
-type dep_anal = simp_facts -> term -> term -> bool
+type dep_anal = simp_facts -> term -> term -> term option
 
 exception NoMatch
 exception Contradiction

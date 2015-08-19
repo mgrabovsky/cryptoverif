@@ -147,7 +147,7 @@ and get_term_bv t = match t.t_desc with
   | ReplIndex _ -> Parsing_helper.input_error "Replication indices should occur only inside variables (implementation)" t.t_loc
   | EventAbortE _ -> Parsing_helper.input_error "Events not allowed in terms (implementation)" t.t_loc
   | FindE _ -> Parsing_helper.input_error "Find not supported (implementation)" t.t_loc
-
+      
 and get_oprocess_bv p =
   match p.p_desc with
       Yield | EventAbort _ -> empty_bv
@@ -194,7 +194,7 @@ let display_vars (a,b)=
     b;
   print_newline ()
 
-
+        
 let impl_get_vars p=
   free_vars := BinderSet.empty;
   bound_vars_under_repl := BinderSet.empty;
@@ -209,7 +209,7 @@ let impl_get_vars p=
 let impl_check impllist =
   let bf=StringMap.empty in
   let boundfiles = ref bf in
-
+    
   let check_read (pn,p,vars,opt) =
     let rec read_opt1 (fv,bv_no_repl,bv_repl) = function
         Read(b,f)::next ->
@@ -371,7 +371,7 @@ let pat_tuple_types pat =
                 List.map (Terms.get_type_for_pattern) pl
             | _ -> [Terms.get_type_for_pattern pat]
         )
-
+        
 
 let rec get_oracle_types_oprocess name args_types p = 
   match p.p_desc with
@@ -409,8 +409,8 @@ let rec get_oracle_types_oprocess name args_types p =
         type_append (get_oracle_types_oprocess name args_types p1) (get_oracle_types_oprocess name args_types p2)
     | Insert(tbl,tl,p) ->
         get_oracle_types_oprocess name args_types p
-
-
+          
+          
 and get_oracle_types_process p =
   match p.i_desc with
     | Nil -> StringMap.empty
@@ -431,7 +431,7 @@ let get_oracles_type_string o =
     "("^(string_list_sep " * " (List.map (fun (_,n) -> get_oracle_name n) o))^")" 
   else
     "unit"
-
+  
 
 let get_type_oracle name (s,args_types) =
   let (ret_types,o) = match s with
@@ -464,7 +464,7 @@ let get_oracles_types process =
        (fun name (s,at) acc -> 
           (get_type_oracle name (s,at))::acc)
        (get_oracle_types_process process) [])
-
+  
 
 let prefix=
   ref ("open Base\n"^
@@ -584,7 +584,7 @@ and translate_get opt tbl patl topt p1 p2 ind =
       "\n"^ind^"end else begin\n"^ind^
       "  let ("^(string_list_sep "," tvars)^") = rand_list "^list^" in"^
       (match_pattern_list opt patl tvars p1 yield_transl false (ind^"  "))^"\n"^ind^"end"
-
+      
 and translate_term t ind =
   let rec termlist sep = function
       [] -> "()"
@@ -631,7 +631,7 @@ and translate_term_to_output t ind =
                 string_list_sep ", " (List.map (fun t -> translate_term t ind) tl)
             | _ -> translate_term t ind
         )
-
+        
 and match_pattern_complex opt pat s p1 p2 in_term ind =
   (*decomposition of every function*)
   let rec decompos=function
@@ -777,7 +777,7 @@ let impl_init opt p =
   "let init () ="^
     (file_loading opt ("  "))^
     (translate_process opt p ("  "))
-
+    
 let get_interface opt p = 
   let o = List.map (fun (b,n,_,_) -> (b,n)) (get_next_oracles true p) in
   "open Base\n"^

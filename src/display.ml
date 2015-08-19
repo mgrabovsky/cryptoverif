@@ -142,7 +142,7 @@ let rec display_var b tl =
       display_list (display_term_paren AllInfix AllProcess) tl;
       print_string "]"
     end
-
+  
 and display_binder_with_array b =
   display_binder b;
   if (!display_arrays) && (b.args_at_creation != []) then
@@ -292,7 +292,7 @@ and display_term t =
   | EventAbortE(f) ->
       print_string "event_abort ";
       print_string f.f_name
-
+      
 and display_term_paren infix_paren process_paren t =
   let infix_paren' = 
     if (!display_occurrences) || (List.memq t.t_occ (!useful_occs)) then
@@ -547,7 +547,7 @@ let rec display_set = function
       display_one_set a;
       print_string " + ";
       display_set l
-
+  
 
 (* Only for the oracles front-end *)
 
@@ -627,7 +627,7 @@ let rec display_procasterm t =
   | EventAbortE(f) ->
       print_string "event_abort ";
       print_string f.f_name
-
+       
 
 let rec display_fungroup indent = function
     ReplRestr(repl, restr, funlist) ->
@@ -1046,7 +1046,7 @@ and display_optprocess indent p =
       print_string ";\n";
       display_process indent p
     end
-
+      
 and display_optoprocess indent p =
   if p.p_desc = Yield then 
     print_string "\n"
@@ -1072,7 +1072,7 @@ and display_oprocess_paren indent p =
 let display_process p =
   display_process "" p;
   print_newline()
-
+	
 (* Instructions *)
 
 let display_rem_set = function
@@ -1211,7 +1211,7 @@ let display_instruct = function
 	    print_string " up to probability ";
 	    display_set set
 	  end) ql
-
+      
 
 let proves_event_query f g = function
     ((QEventQ([false, { t_desc = FunApp(f',[{ t_desc = FunApp(f_tuple, []) }]) }], QTerm t_false),g'), popt) -> 
@@ -1525,7 +1525,7 @@ let compute_proba ((q0,g) as q) p s =
   (* display_proof_tree "" pt; *)
   let start_queries = [InitQuery q0, g] in
   evaluate_proba start_queries g [] start_queries pt  
-
+  
 let display_pat_simp t =
   print_string (match t with 
     DEqTest -> " (equality test)\n"
@@ -2080,7 +2080,7 @@ let display_state s =
   let states_needed_in_queries = get_all_states_from_queries initial_queries in
   let states_to_display = remove_duplicate_states [] (s::states_needed_in_queries) in
   List.iter (fun s -> display_state [] s) states_to_display;  
-
+  
   (* Display the probabilities of proved queries *)
   List.iter (fun (q,poptref,_) ->
     match !poptref with
@@ -2119,5 +2119,5 @@ let display_state s =
       print_string ".\n"
     end
 
-
+  
 

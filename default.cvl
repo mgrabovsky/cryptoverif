@@ -1121,6 +1121,135 @@ equiv ddh(exp)
 
 }
 
+(* Gap Diffie-Hellman 
+   G: type of group elements (must be "bounded" and "large", of cardinal 
+   a prime q), neutral element excluded (so |G| = q-1)
+   Z: type of exponents (must be "bounded" and "large", supposed to be 
+   {1, ..., q-1})
+
+   g: a generator of the group
+   exp: the exponentiation function
+   mult: the multiplication function for exponents, product modulo q in
+   {1, ..., q-1}, i.e. in the group (Z/qZ)*
+
+   pGDH: the probability of breaking the GDH assumption
+
+   The types G and Z and the probability pGDH must be declared before
+   this macro.  The functions g, exp, and mult are defined by this
+   macro. They must not be declared elsewhere, and they can be used
+   only after expanding the macro.
+
+*)
+
+define GDH(G, Z, g, exp, mult, pGDH) {
+
+fun exp(G,Z): G.
+fun exp'(G,Z): G.
+const g:G.
+
+fun mult(Z,Z): Z. 
+equation commut(mult).
+
+(* exponents multiply *)
+
+forall a:G, x:Z, y:Z;
+  exp(exp(a,x), y) = exp(a, mult(x,y)).
+
+(* injectivity *)
+
+forall x:Z, y:Z; (exp(g,x) = exp(g,y)) = (x = y).
+forall x:Z, y:Z; (exp'(g,x) = exp'(g,y)) = (x = y).
+
+(* collision between products *)
+
+collision new x1:Z; new x2:Z; new x3:Z; new x4:Z; 
+  mult(x1,x2) = mult(x3,x4) <=(1/|Z|)=> false. 
+
+forall x:Z, y:Z, y':Z; 
+  (mult(x,y) = mult(x,y')) = (y = y').
+
+(* replace a random group element with an exponentiation, and conversely *)
+
+param N, N'.
+
+equiv group_to_exp_strict(exp)
+      !N new X:G; (OX() := X, !N' OXm(m:Z) [useful_change] := exp(X,m))
+<=(0)=> [computational]
+      !N new x:Z; (OX() := exp(g,x), !N' OXm(m:Z) := exp(g,mult(x,m))).
+
+(* This equivalence is very general, apply it only manually, because
+   otherwise it might be applied too often.  The equivalence above is
+   particular case applied only when X is inside exp, and good for
+   automatic proofs. *)
+
+equiv group_to_exp(exp)
+      !N new X:G; OX() := X 
+<=(0)=> [manual, computational]    
+      !N new x:Z; OX() := exp(g,x).
+
+
+equiv exp_to_group(exp)
+      !N new x:Z; OX() := exp(g,x)
+<=(0)=> [computational]
+      !N new X:G; OX() := X.
+
+equiv exp'_to_group(exp)
+      !N new x:Z; OX() := exp'(g,x)
+<=(0)=> [computational]
+      !N new X:G; OX() := X.
+
+(* the GDH assumption *) 
+
+const mark: bitstring.
+
+param na, naDDH, naDDHa, nb, nbDDH, nbDDHb.
+
+equiv gdh(exp)
+    !na new a:Z; (
+      OA() := exp(g,a), 
+      Oa() [3] := a,
+      !naDDHa ODDHa1(m:G, m':G) := m = exp(m', a),
+      !naDDH ODDHa(m:G, j<=nb) [useful_change] := m = exp(g, mult(b[j], a))
+    ),
+    !nb new b:Z; (
+      OB() := exp(g,b),
+      Ob() [3] := b,
+      !nbDDHb ODDHb1(m:G, m':G) := m = exp(m', b),
+      !nbDDH ODDHb(m:G, j<=na) := m = exp(g, mult(a[j], b))
+    )
+<=((#ODDHa + #ODDHb) * max(1, 7.4*#Oa) * max(1, 7.4*#Ob) * pGDH(time + (na + nb + #ODDHa + #ODDHb) * time(exp), #ODDHa1 + #ODDHb1))=> [computational]
+    !na new a:Z [unchanged]; (
+      OA() := exp'(g,a), 
+      Oa() := let ka:bitstring = mark in a,
+      !naDDHa ODDHa1(m:G, m':G) := if defined(ka) then m = exp'(m', a) else 
+      		  	   find u<=nb suchthat defined(b[u],kb[u]) && m' = exp(g,b[u]) then m = exp'(m', a) else
+			   find u<=nb suchthat defined(b[u]) && m' = exp(g,b[u]) then false else
+                               (* by CDH, if neither a nor b[u] are leaked, then m = exp(g, b[u]*a) is impossible *)
+			   m = exp'(m', a)
+			       (* GDH allows to compute m = exp(m',a) for any m and m', without leaking a *),
+      !naDDH ODDHa(m:G, j<=nb) := find u<=nb suchthat defined(kb[u],b[u]) && b[j] = b[u] then m = exp'(g, mult(b[j], a)) else 
+                            if defined(ka) then m = exp'(g, mult(b[j], a)) else false
+    ),
+    !nb new b:Z [unchanged]; (
+      OB() := exp'(g,b), 
+      Ob() := let kb:bitstring = mark in b,
+      !nbDDHb ODDHb1(m:G, m':G) := if defined(kb) then m = exp'(m', b) else 
+      		  	   find u<=na suchthat defined(a[u],ka[u]) && m' = exp(g,a[u]) then m = exp'(m', b) else
+      		  	   find u<=na suchthat defined(a[u]) && m' = exp(g,a[u]) then false else
+                               (* by CDH, if neither a nor b[u] are leaked, then m = exp(g, a[u]*b) is impossible *)
+			   m = exp'(m', b)
+			       (* GDH allows to compute m = exp(m',a) for any m and m', without leaking a *),
+      !nbDDH ODDHb(m:G, j<=na) := find u<=na suchthat defined(ka[u],a[u]) && a[j] = a[u] then m = exp'(g, mult(a[j], b)) else 
+                            if defined(kb) then m = exp'(g, mult(a[j], b)) else false
+    ).
+
+    (* We need to consider both forms m = exp(m', a) and m = exp(g, mult(b[j], a)) in the equivalence,
+    because, when m' is known to be exp(g, b[j]), CryptoVerif is going to simplify m = exp(m', a) into m = exp(g, mult(b[j], a)),
+    and the procedure that tests whether a term in the game matches a term in the equivalence would not recognize that
+    m = exp(g, mult(b[j], a)) in the game matches m = exp(m', a) in the equivalence. *)
+
+}
+
 (********************************* Miscellaneous ***************************)
 
 (* One-way trapdoor permutation 

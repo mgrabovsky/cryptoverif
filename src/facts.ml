@@ -51,13 +51,7 @@ let filter_ifletfindres l =
 
 (* Display facts; for debugging *)
 
-let display_facts (subst2, facts, elsefind) =
-  print_string "Substitutions:\n";
-  List.iter (fun t -> Display.display_term t; print_newline()) subst2;
-  print_string "Facts:\n";
-  List.iter (fun t -> Display.display_term t; print_newline()) facts;
-  print_string "Elsefind:\n";
-  List.iter (fun (bl, def_list, t) ->
+let display_elsefind (bl, def_list, t) =
     print_string "for all ";
     Display.display_list Display.display_repl_index bl;
     print_string "; not(defined(";
@@ -66,18 +60,45 @@ let display_facts (subst2, facts, elsefind) =
     Display.display_term t;
     print_string ")";
     print_newline()
-    ) elsefind
 
-(* On demand substitutions 
+let display_facts (subst2, facts, elsefind) =
+  print_string "Substitutions:\n";
+  List.iter (fun t -> Display.display_term t; print_newline()) subst2;
+  print_string "Facts:\n";
+  List.iter (fun t -> Display.display_term t; print_newline()) facts;
+  print_string "Elsefind:\n";
+  List.iter display_elsefind elsefind
 
-let try_no_var (subst, facts) t =
-   when t is FunApp(_), return t itself.
-   when t is Var(_), try applying substitutions until t becomes FunApp(_)
-   if impossible, return t itself.
+(* Invariants on [simp_facts]
 
-   It may be necessary to apply subtitutions to strict subterms of t
-   in order to be able to apply another substitution to t itself.
+simp_facts = (subst, facts, elsefind)
+subst is a list of rewrite rules t1 -> t2 such that
+   * when t1/t2 are variables Var/ReplIndex, they are normalized by the
+   other rewrite rules in subst
+   * when t1/t2 are function applications FunApp, they are normalized only
+   at the root by the other rewrite rules in subst.
+   * only Var/ReplIndex/FunApp are allowed in terms in subst.
+The reason for not fully normalizing all terms is that we do not want
+to replace a variable with its value if it is not necessary for applying
+a simplification (because it may make cryptographic primitives appear
+at unwanted places, such as conditions of find, and at more occurrences
+than needed). Hence, if we replace a variable with a function application,
+we stop there, without replacing again other variables inside that function
+application.
+The rewrite rule t1 -> t2 is represented by an equality
+t1 = t2 (where = is either Equal or LetEqual) in subst.
+   * LetEqual is used for equalities that come from "let" declarations.
+   In this case, t1 is a variable, t2 is its value, and the orientation
+   can never be reversed.
+   * Equal is used for other equalities.
 
+facts is a list of other known facts
+
+elsefind is a list of elsefind facts:
+(bl, def_list, t) means forall bl, not(defined(def_list) && t) 
+
+
+OLD COMMENTS:
    Apply on demand substitution when 
    - a matching for a reduction rule meets a variable when
    it expects a function symbol
@@ -88,6 +109,8 @@ let try_no_var (subst, facts) t =
    - let (...) = x[...] substitute x
 
 Substitutions map variables x[...] to some term.
+   ==> Now, they are rather rewrite rules, since they can map
+   terms other than variables...
 
 Difficulty = avoid loops; when should I stop applying substitutions
 to avoid cycles? Do not reapply the same subtitution in a term
@@ -104,7 +127,7 @@ for each occ' occurrence of a variable in N'.
 
 *)
 
-let no_dependency_anal = fun _ _ _ -> false
+let no_dependency_anal = fun _ _ _ -> None
 
 (* [orient t1 t2] returns true when the equality t1 = t2
    can be oriented t1 -> t2. 
@@ -143,12 +166,12 @@ let rec orient t1 t2 =
       let v_t2 = Terms.count_var t2 in
       (v_t1 > v_t2) || ((v_t1 = v_t2) && (Terms.size t1 >= Terms.size t2))
   | _ -> false
-
-let orient_eq try_no_var t1 t2 =
+    
+let orient_eq t1 t2 =
   if orient t1 t2 then Some(t1,t2) else
   if orient t2 t1 then Some(t2,t1) else None
 
-let prod_orient_eq eq_th try_no_var l1 l2 =
+let prod_orient_eq eq_th l1 l2 =
   match eq_th with 
   | (ACUN(prod, _) | Group(prod, _, _) | CommutGroup(prod, _, _)) -> 
       let rec find_orient t2 seen = function
@@ -176,15 +199,20 @@ let prod_dep_anal eq_th dep_info simp_facts l1 l2 =
   match eq_th with 
   | (ACUN(prod, _) | Group(prod, _, _) | CommutGroup(prod, _, _)) -> 
       let rec find_orient t2 seen = function
-	  [] -> false
+	  [] -> None
 	| (t::l) ->
 	        (* We have product (List.rev seen) t l = t2.
 		   So t = product (inv (product (List.rev seen))) t2 (inv (product l)). *)
 	    let t' = Terms.make_inv_prod eq_th seen t2 l in
-	    (dep_info simp_facts t t') || (find_orient t2 (t::seen) l)
+	    match dep_info simp_facts t t' with
+	      None -> find_orient t2 (t::seen) l
+	    | x -> x
       in
-      (find_orient (Terms.make_prod prod l2) [] l1) ||
-      (find_orient (Terms.make_prod prod l1) [] l2)
+      begin
+	match find_orient (Terms.make_prod prod l2) [] l1 with
+	  None -> find_orient (Terms.make_prod prod l1) [] l2
+	| x -> x
+      end
   | _ -> Parsing_helper.internal_error "Expecting a group or xor theory in Facts.prod_dep_anal"
 
 (* Apply reduction rules defined by statements to term t *)
@@ -207,7 +235,7 @@ let get_var_link restr t () =
   | Var _ | ReplIndex _ | TestE _ | FindE _ | LetE _ | ResE _ | EventAbortE _ ->
       Parsing_helper.internal_error "Var with arguments, replication indices, if, find, let, new, event should not occur in match_assoc"      
 
-let rec match_term try_no_var restr next_f t t' () = 
+let rec match_term simp_facts restr next_f t t' () = 
   let get_var_link = get_var_link restr in
   let rec match_term_rec next_f t t' () =
     Terms.auto_cleanup (fun () -> 
@@ -230,36 +258,36 @@ let rec match_term try_no_var restr next_f t t' () =
 		  end;
 		Terms.link v (TLink t')
 	    | TLink t -> 
-		if not (Terms.simp_equal_terms try_no_var t t') then raise NoMatch
+		if not (Terms.simp_equal_terms simp_facts true t t') then raise NoMatch
 	  end;
 	  next_f()
       | FunApp(f,l) ->
-	  Terms.match_funapp match_term_rec get_var_link Terms.default_match_error try_no_var next_f t t' ()
+	  Terms.match_funapp match_term_rec get_var_link Terms.default_match_error simp_facts next_f t t' ()
       | Var _ | ReplIndex _ | TestE _ | FindE _ | LetE _ | ResE _ | EventAbortE _ ->
 	  Parsing_helper.internal_error "Var with arguments, replication indices, if, find, let, new, event should not occur in match_term"
 	    )
   in
   match_term_rec next_f t t' ()
 
-let match_term_root_or_prod_subterm try_no_var restr final next_f t t' =
+let match_term_root_or_prod_subterm simp_facts restr final next_f t t' =
   match t.t_desc with
     FunApp(f,[_;_]) when f.f_eq_theories != NoEq && f.f_eq_theories != Commut ->
       (* f is a binary function with an equational theory that is
 	 not commutativity -> it is a product-like function *)
-      let l = Terms.simp_prod try_no_var (ref false) (Terms.simp_equal_terms try_no_var) f t in
-      let l' = Terms.simp_prod try_no_var (ref false) (Terms.simp_equal_terms try_no_var) f t' in
+      let l = Terms.simp_prod simp_facts (ref false) f t in
+      let l' = Terms.simp_prod simp_facts (ref false) f t' in
       begin
 	match f.f_eq_theories with
 	  NoEq | Commut -> Parsing_helper.internal_error "Facts.match_term_root_or_prod_subterm: cases NoEq, Commut should have been eliminated"
 	| AssocCommut | AssocCommutN _ | CommutGroup _ | ACUN _ ->
-	    Terms.match_AC (match_term try_no_var restr) (get_var_link restr) Terms.default_match_error (fun rest () -> 
-	      final (Terms.make_prod f ((next_f())::rest))) try_no_var f true l l' ()
+	    Terms.match_AC (match_term simp_facts restr) (get_var_link restr) Terms.default_match_error (fun rest () -> 
+	      final (Terms.make_prod f ((next_f())::rest))) simp_facts f true l l' ()
 	| Assoc | AssocN _ | Group _ -> 
-	    Terms.match_assoc_subterm (match_term try_no_var restr) (get_var_link restr) (fun rest_left rest_right () ->
-	      final (Terms.make_prod f (rest_left @ (next_f())::rest_right))) try_no_var f l l' ()
+	    Terms.match_assoc_subterm (match_term simp_facts restr) (get_var_link restr) (fun rest_left rest_right () ->
+	      final (Terms.make_prod f (rest_left @ (next_f())::rest_right))) simp_facts f l l' ()
       end
   | _ ->
-      match_term try_no_var restr (fun () -> final (next_f())) t t' ()
+      match_term simp_facts restr (fun () -> final (next_f())) t t' ()
 
 let reduced = ref false
 
@@ -274,14 +302,14 @@ let rec check_indep v = function
 	  else
 	    l_indep
       |	_ -> Parsing_helper.internal_error "variables should be linked in check_indep"
-
+	  
 let rec check_indep_list = function
     [] -> []
   | [v] -> []
   | (v::l) ->
       (check_indep v l) @ (check_indep_list l)
 
-(* [apply_collisions_at_root_once reduce_rec try_no_var final t collisions] 
+(* [apply_collisions_at_root_once reduce_rec simp_facts final t collisions] 
    applies all collisions in the list [collisions] to the root of term [t].
    It calls the function [final] on each term obtained by applying a collision.
    The function final may raise the exception [NoMatch] so that other 
@@ -294,11 +322,11 @@ let rec check_indep_list = function
    in addition to the already known facts. It sets the flag [reduced]
    when [t] has really been modified. *)
 
-let rec apply_collisions_at_root_once reduce_rec try_no_var final t = function
+let rec apply_collisions_at_root_once reduce_rec simp_facts final t = function
     [] -> raise NoMatch
   | (restr, forall, redl, proba, redr)::other_coll ->
       try
-	match_term_root_or_prod_subterm try_no_var restr final (fun () -> 
+	match_term_root_or_prod_subterm simp_facts restr final (fun () -> 
 	  let t' = Terms.copy_term Terms.Links_Vars redr in
 	  let l_indep = check_indep_list restr in
 	  let redl' = Terms.copy_term Terms.Links_Vars redl in
@@ -357,35 +385,35 @@ let rec apply_collisions_at_root_once reduce_rec try_no_var final t = function
 	    ) redl t
       with NoMatch ->
 	Terms.cleanup();
-	apply_collisions_at_root_once reduce_rec try_no_var final t other_coll
+	apply_collisions_at_root_once reduce_rec simp_facts final t other_coll
 
 
 let reduce_rec_impossible t = assert false
 
-let apply_statements_at_root_once try_no_var t =
+let apply_statements_at_root_once simp_facts t =
   match t.t_desc with
     FunApp(f,_) ->
       begin
 	try 
-	  apply_collisions_at_root_once reduce_rec_impossible try_no_var (fun t' -> reduced := true; t') t f.f_statements 
+	  apply_collisions_at_root_once reduce_rec_impossible simp_facts (fun t' -> reduced := true; t') t f.f_statements 
 	with NoMatch -> t
       end
   | _ -> t
 
-let apply_statements_and_collisions_at_root_once reduce_rec try_no_var t =
+let apply_statements_and_collisions_at_root_once reduce_rec simp_facts t =
   match t.t_desc with
     FunApp(f,_) ->
       begin
 	try 
-	  apply_collisions_at_root_once reduce_rec_impossible try_no_var (fun t' -> reduced := true; t') t f.f_statements 
+	  apply_collisions_at_root_once reduce_rec_impossible simp_facts (fun t' -> reduced := true; t') t f.f_statements 
 	with NoMatch ->
 	  try 
-	    apply_collisions_at_root_once reduce_rec try_no_var (fun t' -> reduced := true; t') t f.f_collisions 
+	    apply_collisions_at_root_once reduce_rec simp_facts (fun t' -> reduced := true; t') t f.f_collisions 
 	  with NoMatch -> t
       end
   | _ -> t
 
-(* [apply_simplif_subterms_once simplif_root_or_prod_subterm try_no_var t] 
+(* [apply_simplif_subterms_once simplif_root_or_prod_subterm simp_facts t] 
    applies the simplification specified by [simplif_root_or_prod_subterm] 
    to all subterms of [t].
 
@@ -405,7 +433,7 @@ let rec first_inv inv = function
       |	_ -> 
 	  ([], x)
 
-let apply_simplif_subterms_once simplif_root_or_prod_subterm try_no_var t = 
+let apply_simplif_subterms_once simplif_root_or_prod_subterm simp_facts t = 
   let rec simplif_rec t =
   match t.t_desc with
     FunApp(f, [_;_]) when f.f_eq_theories != NoEq && f.f_eq_theories != Commut ->
@@ -416,13 +444,13 @@ let apply_simplif_subterms_once simplif_root_or_prod_subterm try_no_var t =
       (* We apply the statements only to subterms that are not products by f.
 	 Subterms that are products by f are already handled above
 	 using [match_term_root_or_prod_subterm]. *)
-      let l = Terms.simp_prod try_no_var (ref false) (Terms.simp_equal_terms try_no_var) f t in
+      let l = Terms.simp_prod simp_facts (ref false) f t in
       Terms.make_prod f (List.map simplif_rec l)
   | FunApp(f, ([t1;t2] as l)) when f.f_cat == Equal || f.f_cat == Diff ->
       let t' = simplif_root_or_prod_subterm t in
       if !reduced then t' else 
       begin
-	match Terms.get_prod_list try_no_var l with
+	match Terms.get_prod_list (Terms.try_no_var simp_facts) l with
 	  ACUN(xor, neut) ->
 	    let t' = Terms.app xor [t1;t2] in
 	    let t'' = simplif_rec t' in
@@ -439,7 +467,7 @@ let apply_simplif_subterms_once simplif_root_or_prod_subterm try_no_var t =
 	| CommutGroup(prod, inv, neut) -> 
 	    let rebuild_term t'' = 
 	      (* returns a term equal to [f(t'', neut)] *)
-	      let l = Terms.simp_prod try_no_var (ref false) (Terms.simp_equal_terms try_no_var) prod t'' in
+	      let l = Terms.simp_prod simp_facts (ref false) prod t'' in
 	      let linv, lno_inv = List.partition (Terms.is_fun inv) l in
 	      let linv_removed = List.map (function { t_desc = FunApp(f,[t]) } when f == inv -> t | _ -> assert false) linv in
 	      Terms.build_term2 t (FunApp(f, [ Terms.make_prod prod lno_inv; 
@@ -461,7 +489,7 @@ let apply_simplif_subterms_once simplif_root_or_prod_subterm try_no_var t =
 	| Group(prod, inv, neut) ->
 	    let rebuild_term t'' =
 	      (* returns a term equal to [f(t'', neut)] *)
-	      let l = Terms.simp_prod try_no_var (ref false) (Terms.simp_equal_terms try_no_var) prod t'' in
+	      let l = Terms.simp_prod simp_facts (ref false) prod t'' in
 	      let (inv_first, rest) = first_inv inv l in
 	      let (inv_last_rev, rest_rev) = first_inv inv (List.rev rest) in
 		(* if inv_first = [x1...xk], inv_last_rev = [y1...yl],
@@ -473,8 +501,8 @@ let apply_simplif_subterms_once simplif_root_or_prod_subterm try_no_var t =
 	      Terms.build_term2 t (FunApp(f, [ Terms.make_prod prod (List.rev rest_rev) ; 
 					       Terms.make_prod prod (List.rev_append inv_first inv_last_rev)]))
 	    in
-	    let l1 = Terms.simp_prod try_no_var (ref false) (Terms.simp_equal_terms try_no_var) prod (Terms.app prod [t1; Terms.app inv [t2]]) in
-	    let l2 = Terms.remove_inverse_ends try_no_var (ref false) (prod, inv, neut) (Terms.simp_equal_terms try_no_var) l1 in
+	    let l1 = Terms.simp_prod simp_facts (ref false) prod (Terms.app prod [t1; Terms.app inv [t2]]) in
+	    let l2 = Terms.remove_inverse_ends simp_facts (ref false) (prod, inv, neut) l1 in
 	    let rec apply_up_to_roll seen' rest' =
 	      let t0 = (Terms.make_prod prod (rest' @ (List.rev seen'))) in
 	      let t'' = simplif_root_or_prod_subterm t0 in
@@ -487,11 +515,11 @@ let apply_simplif_subterms_once simplif_root_or_prod_subterm try_no_var t =
 	    in
 	    let t' = apply_up_to_roll [] l2 in
 	    if !reduced then t' else
-	    let l3 = List.rev (List.map (Terms.compute_inv try_no_var (ref false) (prod, inv, neut)) l2) in
+	    let l3 = List.rev (List.map (Terms.compute_inv (Terms.try_no_var simp_facts) (ref false) (prod, inv, neut)) l2) in
 	    let t' = apply_up_to_roll [] l3 in
 	    if !reduced then t' else
-	    let l1 = Terms.simp_prod try_no_var (ref false) (Terms.simp_equal_terms try_no_var) prod t1 in
-	    let l2 = Terms.simp_prod try_no_var (ref false) (Terms.simp_equal_terms try_no_var) prod t2 in
+	    let l1 = Terms.simp_prod simp_facts (ref false) prod t1 in
+	    let l2 = Terms.simp_prod simp_facts (ref false) prod t2 in
 	    Terms.build_term2 t (FunApp(f, [ Terms.make_prod prod (List.map simplif_rec l1);
 					     Terms.make_prod prod (List.map simplif_rec l2) ]))
 	| _ -> 
@@ -507,8 +535,8 @@ let apply_simplif_subterms_once simplif_root_or_prod_subterm try_no_var t =
 
 (* For debugging: replace Terms.apply_eq_reds with apply_eq_reds below.
 
-let apply_eq_reds try_no_var reduced t =
-  let t' = Terms.apply_eq_reds try_no_var reduced t in
+let apply_eq_reds simp_facts reduced t =
+  let t' = Terms.apply_eq_reds simp_facts reduced t in
   if !reduced then
     begin
       print_string "apply_eq_reds ";
@@ -520,28 +548,28 @@ let apply_eq_reds try_no_var reduced t =
   t'
 *)
 
-(* [apply_eq_statements_subterms_once try_no_var t] applies the equalities 
+(* [apply_eq_statements_subterms_once simp_facts t] applies the equalities 
    coming from the equational theories and the equality
    statements given in the input file to all subterms of [t]. *)
 
-let apply_eq_statements_subterms_once try_no_var t =
-  let t' = Terms.apply_eq_reds try_no_var reduced t in
+let apply_eq_statements_subterms_once simp_facts t =
+  let t' = Terms.apply_eq_reds simp_facts reduced t in
   if !reduced then t' else 
-  apply_simplif_subterms_once (apply_statements_at_root_once try_no_var) try_no_var t
+  apply_simplif_subterms_once (apply_statements_at_root_once simp_facts) simp_facts t
 
-(* [apply_eq_statements_and_collisions_subterms_once reduce_rec try_no_var t] 
+(* [apply_eq_statements_and_collisions_subterms_once reduce_rec simp_facts t] 
    applies the equalities coming from the equational theories, 
    the equality statements, and the collisions given in the input 
    file to all subterms of [t]. *)
 
-let apply_eq_statements_and_collisions_subterms_once reduce_rec try_no_var t =
-  let t' = Terms.apply_eq_reds try_no_var reduced t in
+let apply_eq_statements_and_collisions_subterms_once reduce_rec simp_facts t =
+  let t' = Terms.apply_eq_reds simp_facts reduced t in
   if !reduced then t' else 
-  apply_simplif_subterms_once (apply_statements_and_collisions_at_root_once reduce_rec try_no_var) try_no_var t
+  apply_simplif_subterms_once (apply_statements_and_collisions_at_root_once reduce_rec simp_facts) simp_facts t
 
 (* For debugging 
-let apply_eq_statements_and_collisions_subterms_once reduce_rec try_no_var t =
-  let t' = apply_eq_statements_and_collisions_subterms_once reduce_rec try_no_var t in
+let apply_eq_statements_and_collisions_subterms_once reduce_rec simp_facts t =
+  let t' = apply_eq_statements_and_collisions_subterms_once reduce_rec simp_facts t in
   if !reduced then
     begin
       print_string "apply_eq_statements_and_collisions_subterms_once ";
@@ -557,27 +585,30 @@ let apply_eq_statements_and_collisions_subterms_once reduce_rec try_no_var t =
 
 let reduced_subst = ref false
 
-let rec apply_subst1 try_no_var t tsubst =
+let try_no_var = Terms.try_no_var
+let normalize = try_no_var
+
+let rec apply_subst1 simp_facts t tsubst =
   match tsubst.t_desc with
     FunApp(f,[redl;redr]) when f.f_cat == Equal || f.f_cat == LetEqual ->
       begin
 	match t.t_desc with
-	  FunApp(f,l) -> 
+	  FunApp _ -> 
 	    begin
 	      (* When we apply the substitution to a FunApp term, we do not apply
 		 it recursively to its subterms, to avoid getting more function
-		 symbols than the minimum in try_no_var below. 
+		 symbols than the minimum. 
 		 However, we may apply other substitutions to subterms, to make it
 		 possible to apply tsubst at the root. This is done by
-		 [Terms.simp_equal_terms try_no_var t redl].
+		 [Terms.simp_equal_terms simp_facts false t redl].
 
-		 It is important that [try_no_var] never sets [reduced_subst].
+		 It is important that [Terms.simp_equal_terms] never sets [reduced_subst].
 		 Otherwise, [apply_subst1] might set [reduced_subst] inside the call
-		 to [Terms.simp_equal_terms try_no_var t redl], even though the
+		 to [Terms.simp_equal_terms simp_facts false t redl], even though the
 		 equality is false, so the caller of [apply_subst1] would wrongly
 		 think that the term has been modified.
 		*)
-              if Terms.simp_equal_terms try_no_var t redl then 
+              if Terms.simp_equal_terms simp_facts false t redl then 
 		begin
 		  reduced_subst := true;
 		  redr
@@ -594,91 +625,14 @@ let rec apply_subst1 try_no_var t tsubst =
            else
              match t.t_desc with
                Var(b,l) ->
-	         Terms.build_term2 t (Var(b, List.map (fun t' -> apply_subst1 try_no_var t' tsubst) l))
+	         Terms.build_term2 t (Var(b, List.map (fun t' -> apply_subst1 simp_facts t' tsubst) l))
 (*    
              | FunApp(f,l) ->
-	         Terms.build_term2 t (FunApp(f, List.map (fun t' -> apply_subst1 try_no_var t' tsubst) l))
+	         Terms.build_term2 t (FunApp(f, List.map (fun t' -> apply_subst1 simp_facts t' tsubst) l))
 *)
              | _ -> t
       end
   | _ -> Parsing_helper.internal_error "substitutions should be Equal or LetEqual terms"
-
-let rec apply_subst_list t = function
-    [] -> t
-  | tsubst::rest -> 
-     match tsubst.t_desc with
-       FunApp(f,[redl;redr]) when f.f_cat == Equal || f.f_cat == LetEqual ->
-         begin
-           if Terms.equal_terms t redl then 
-	     redr
-           else
-	     apply_subst_list t rest
-         end
-     | _ -> Parsing_helper.internal_error "substitutions should be Equal or LetEqual terms"
-
-
-
-(* Since the RHS of rewrite rules is already normalized,
-   it is enough to apply rewrite rules once at each variable 
-   symbol from the inside to the outside to normalize the term. *)
-
-let rec normalize_var subst2 t =
-  match t.t_desc with
-    Var(b,l) ->
-      let l' = List.map (normalize_var subst2) l in
-      let t' = Terms.build_term2 t (Var(b,l')) in
-      apply_subst_list t' subst2
-  | ReplIndex _ -> 
-      apply_subst_list t subst2
-  | FunApp _ ->
-      (* This property requires variables not to contain functions.
-	 This is true now, but may change in the future. *)
-      Display.display_term t; print_newline();
-      Parsing_helper.internal_error "FunApp should not occur in normalize"
-  | TestE _ | FindE _ | LetE _ | ResE _ | EventAbortE _ -> 
-      Display.display_term t; print_newline();
-      Parsing_helper.internal_error "If, find, let, and new should not occur in normalize"
-
-let rec try_no_var (subst2, _, _) t =
-  match t.t_desc with
-    FunApp(f,l) -> t
-  | Var _ | ReplIndex _ -> 
-      normalize_var subst2 t 
-  | TestE _ | FindE _ | LetE _ | ResE _ | EventAbortE _ -> 
-      Display.display_term t; print_newline();
-      Parsing_helper.internal_error "If, find, let, and new should not occur in try_no_var"
-
-(*
-The code below makes sure that terms with a function symbol
-at the root are normalized by the rewrite rule.
-It slows down the execution, so instead we simply use
-[try_no_var] which leaves terms with a function symbol
-at the root unchanged.
-
-let rec apply_subst_list_fun try_no_var t = function
-    [] -> t
-  | tsubst::rest -> 
-     match tsubst.t_desc with
-       FunApp(f,[redl;redr]) when f.f_cat == Equal || f.f_cat == LetEqual ->
-         begin
-           if Terms.simp_equal_terms try_no_var t redl then 
-	     redr
-           else
-	     apply_subst_list_fun try_no_var t rest
-         end
-     | _ -> Parsing_helper.internal_error "substitutions should be Equal or LetEqual terms"
-
-let normalize ((subst2, _, _) as simp_facts) t =
-  match t.t_desc with
-    FunApp(f,l) ->
-      apply_subst_list_fun (try_no_var simp_facts) t subst2
-  | Var _ | ReplIndex _ -> 
-      normalize_var subst2 t 
-  | TestE _ | FindE _ | LetE _ | ResE _ | EventAbortE _ -> 
-      Display.display_term t; print_newline();
-      Parsing_helper.internal_error "If, find, let, and new should not occur in try_no_var"
-  *)
-let normalize = try_no_var
 
 (* [apply_reds simp_facts t] applies all equalities coming from the
    equational theories, equality statements, and collisions given in
@@ -688,7 +642,7 @@ let normalize = try_no_var
 
 let rec apply_reds simp_facts t =
   reduced := false;
-  let t' = apply_eq_statements_and_collisions_subterms_once (reduce_rec simp_facts) (try_no_var simp_facts) t in
+  let t' = apply_eq_statements_and_collisions_subterms_once (reduce_rec simp_facts) simp_facts t in
   if !reduced then 
     apply_reds simp_facts t' 
   else
@@ -702,7 +656,7 @@ let rec apply_reds simp_facts t =
 
 and apply_sub1 simp_facts t link = 
   reduced_subst := false;
-  let t1 = apply_subst1 (try_no_var simp_facts) t link in
+  let t1 = apply_subst1 simp_facts t link in
   (!reduced_subst, t1)
 
 (* [apply_eq_st_coll1 simp_facts t] applies all equalities coming from the
@@ -718,7 +672,7 @@ and apply_eq_st_coll1 simp_facts t =
       (false, t)
   | FunApp _ ->
       reduced := false;
-      let t' = apply_eq_statements_and_collisions_subterms_once (reduce_rec simp_facts) (try_no_var simp_facts) t in
+      let t' = apply_eq_statements_and_collisions_subterms_once (reduce_rec simp_facts) simp_facts t in
       (!reduced, t')
   | _ -> Parsing_helper.internal_error "If/let/find/new not allowed in apply_eq_st_coll1"
 
@@ -729,7 +683,7 @@ and apply_eq_st_coll1 simp_facts t =
 and reduce_rec simp_facts f t = 
   Terms.auto_cleanup (fun () ->
     let simp_facts' = simplif_add no_dependency_anal simp_facts f in
-    apply_eq_statements_subterms_once (try_no_var simp_facts') t)   
+    apply_eq_statements_subterms_once simp_facts' t)   
 
 (* Replaces each occurence of t in fact with true *)
 and replace_with_true modified t fact =
@@ -747,7 +701,7 @@ and replace_with_true modified t fact =
 	| _ ->
 	    Parsing_helper.internal_error "Only Var and FunApp should occur in facts in replace_with_true")
       (* ReplIndex can occur here because replication indices can occur as arguments of functions in events *)
-
+	  
 (* Simplify existing facts by knowing that the new term t is true, and then simplify the term t by knowing the facts are true *)
 and simplify_facts dep_info (subst2,facts,elsefind) t =
   let mod_facts = ref [] in
@@ -835,23 +789,28 @@ and add_fact dep_info simp_facts fact =
 		(Proba.is_large_term t1' || Proba.is_large_term t2') &&
 		(b1 != b2) && (Proba.add_elim_collisions b1 b2)->
 		  raise Contradiction
-	      | (_,_) when dep_info simp_facts t1' t2' ->
-		  raise Contradiction
 	      | (FunApp(f1,[]), FunApp(f2,[]) ) when
 		f1 != f2 && (!Settings.diff_constants) ->
 		  raise Contradiction
 	          (* Different constants are different *)
               | (_, _) -> 
-		  match orient_eq (try_no_var simp_facts) t1' t2' with
-		    Some(t1'',t2'') -> 
-		      subst_simplify2 dep_info simp_facts (Terms.make_equal t1'' t2'')
-		  | None ->
-		      (subst2, fact'::facts, elsefind)
+		  match dep_info simp_facts t1' t2' with
+		    Some t' ->
+		      if Terms.is_false t' then
+			raise Contradiction
+		      else
+			simplif_add dep_info simp_facts t'
+		  | None -> 
+		      match orient_eq t1' t2' with
+			Some(t1'',t2'') -> 
+			  subst_simplify2 dep_info simp_facts (Terms.make_equal t1'' t2'')
+		      | None ->
+			  (subst2, fact'::facts, elsefind)
 	    end
 	| (ACUN(prod, neut) | Group(prod, _, neut) | CommutGroup(prod, _, neut)) as eq_th -> 
 	    begin
-	      let l1 = Terms.simp_prod (try_no_var simp_facts) (ref false) (Terms.simp_equal_terms (try_no_var simp_facts)) prod t1' in
-	      let l2 = Terms.simp_prod (try_no_var simp_facts) (ref false) (Terms.simp_equal_terms (try_no_var simp_facts)) prod t2' in
+	      let l1 = Terms.simp_prod simp_facts (ref false) prod t1' in
+	      let l2 = Terms.simp_prod simp_facts (ref false) prod t2' in
 	      let l1' = List.map (normalize simp_facts) l1 in
 	      let l2' = List.map (normalize simp_facts) l2 in
 	      (* The argument of add_fact has always been simplified by Terms.apply_eq_reds 
@@ -862,10 +821,14 @@ and add_fact dep_info simp_facts fact =
 		 none on the other, when there is no inverse.
 		 In all cases, the simplifications FunApp/FunApp or Var/Var cannot be applied,
 		 so we just try to apply dependency analysis, and orient the equation when it fails. *)
-	      if prod_dep_anal eq_th dep_info simp_facts l1' l2' then
-		raise Contradiction
-	      else
-		match prod_orient_eq eq_th (try_no_var simp_facts) l1' l2' with
+	      match prod_dep_anal eq_th dep_info simp_facts l1' l2' with
+		Some t' ->
+		  if Terms.is_false t' then
+		    raise Contradiction
+		  else
+		    simplif_add dep_info simp_facts t'
+	      |	None ->
+		match prod_orient_eq eq_th l1' l2' with
 		  Some(t1'',t2'') -> 
 		    subst_simplify2 dep_info simp_facts (Terms.make_equal t1'' t2'')
 		| None ->
@@ -1040,17 +1003,22 @@ and specialized_add_fact dep_info simp_facts fact =
 	  (Proba.is_large_term t1 || Proba.is_large_term t2') &&
 	  (b1 != b2) && (Proba.add_elim_collisions b1 b2)->
 	    raise Contradiction
-	| (_,_) when dep_info simp_facts t1 t2' ->
-	    raise Contradiction
 	| (FunApp(f1,[]), FunApp(f2,[]) ) when
 	  f1 != f2 && (!Settings.diff_constants) ->
 	    raise Contradiction
 	          (* Different constants are different *)
 	| (_,_) -> 
-	    if not (Terms.is_subterm t1 t2') then
-	      specialized_subst_simplify2 dep_info simp_facts (Terms.make_equal t1 t2')
-	    else
-	      (subst2, fact::facts, elsefind)
+	    match dep_info simp_facts t1 t2' with
+	      Some t' ->
+		if Terms.is_false t' then 
+		  raise Contradiction 
+		else
+		  (subst2, t' :: facts, elsefind)
+	    | None ->
+		if not (Terms.is_subterm t1 t2') then
+		  specialized_subst_simplify2 dep_info simp_facts (Terms.make_equal t1 t2')
+		else
+		  (subst2, fact::facts, elsefind)
       end
   | _ -> 
       Parsing_helper.internal_error "specialized_add_fact: t = t' expected"
@@ -1164,7 +1132,7 @@ let simplif_add_find_cond dep_info simp_facts fact =
   match fact.t_desc with
     Var _ | FunApp _ -> simplif_add dep_info simp_facts fact
   | _ -> simp_facts
-
+    
 
 (* Compute the list of variables that must be defined at a certain
 point, taking into account defined conditions of find *)
@@ -1221,49 +1189,106 @@ let get_def_vars_above2 current_node_opt n =
    Variables that are defined above the find (so don't need a "defined"
    condition) are found by "get_def_vars_above def_node". 
    Variables that already have a "defined" condition above the current
-   find are found by "def_node.def_vars_at_def". *)
+   find are found by "def_vars". *)
 let reduced_def_list def_node_opt def_list =
   match def_node_opt with
     Some (_, def_vars, def_node) ->
       Terms.setminus_binderref def_list (def_vars @ (get_def_vars_above def_node))
   | None -> def_list
 
-(* More precise solution, but must not be used to remove elements
+(* [filter_suffix_indices seen_refs b args] computes the variables in
+   [seen_refs], different from [b], with indices [args'] such that
+   [args'] and [args] are suffix of one another.
+
+   [b] is excluded because the computation of [n.n_compatible] does not
+   always include [b] when [b] is defined at [n]. *)
+
+let filter_suffix_indices seen_refs b args =
+  let accu = ref [] in
+  List.iter (fun (b',args') ->
+    let l = List.length args in
+    let l' = List.length args' in
+    let min = if l > l' then l' else l in
+    let args_skip = Terms.skip (l-min) args in
+    let args_skip' = Terms.skip (l'-min) args' in
+    if (List.for_all2 Terms.equal_terms args_skip args_skip') &&
+      (b' != b) && (not (List.memq b' (!accu))) then
+      accu := b' :: (!accu)
+		     ) seen_refs;
+  !accu
+
+(* [is_compatible refs_suffix_indices n] returns true when the variables
+   in [refs_suffix_indices] can be defined at node [n], with indices
+   [args] such that [args] and the current replication indices at [n]
+   are suffix of one another. *)
+
+let is_compatible refs_suffix_indices n =
+  (* For safety, when n.n_compatible == Terms.empty_compatible,
+     we consider that n.n_compatible has not been computed, so
+     all variables are considered compatible. 
+     Similarly, when b.compatible == Terms.compatible_empty,
+     all variables are considered compatible with b. This is 
+     important for the proof of correspondences, because we 
+     introduce new variables for which compatible is not set. *)
+  (n.n_compatible == Terms.compatible_empty) ||
+  (List.for_all (fun b -> (b.compatible == Terms.compatible_empty) || 
+                          (Binderset.mem n.n_compatible b)) refs_suffix_indices)
+
+(* [get_compatible_def_nodes def_vars b l] returns the list of 
+   possible definitions nodes for [b[l]], compatible with
+   the knowledge that the variables in [def_vars] are defined. *)
+
+let get_compatible_def_nodes def_vars b l =
+  (* Compute the variables for which we are sure that they are defined
+     with indices such that these indices and l are suffix of one another *)
+  let refs_suffix_indices = filter_suffix_indices def_vars b l in
+  (* Keep only the nodes that define b and that are compatible with these variables *)
+  List.filter (is_compatible refs_suffix_indices) b.def 
+
+(* [add_def_vars current_node def_vars_accu seen_refs br] adds in
+   [def_vars_accu] the variables that are known to be defined when [br]
+   is defined and [current_node] corresponds to the current program
+   point. [seen_refs] stores the variables already seen to avoid loops.
+
+[add_def_vars] must not be used to remove elements
 of def_list, just to test whether all elements of def_list are defined,
 in which case for a "find ... defined(def_list) && M", if M is true,
 the else branch can be removed. -- Useful to remove the "else" branches
 generated by applying the security of a Diffie-Hellman key agreement,
 for example. 
-Removing useful elements of def_list breaks the code of SArename 
-
-   [add_def_vars current_node def_vars_accu seen_refs br] adds in
-   [def_vars_accu] the variables that are known to be defined when [br]
-   is defined and [current_node] corresponds to the current program
-   point. [seen_refs] stores the variables already seen to avoid loops.
+Removing all elements of def_list that are already known to be defined
+according to [add_def_vars] would remove too many elements, and
+break the code of SArename.
+Use [reduced_def_list] above to remove useless elements of def_list.
 *)
 
-let rec add_def_vars current_node seen_refs ((b,l) as br) =
+let rec add_def_vars current_node seen_refs done_refs ((b,l) as br) =
   if (List.for_all (check_non_nested [] [b]) l) &&
-    (not (Terms.mem_binderref br (!seen_refs))) then
+    (not (Terms.mem_binderref br (!done_refs))) then
     begin
-      seen_refs := br :: (!seen_refs);
-      let def_vars_above_def = Terms.intersect_list (==) (List.map (get_def_vars_above2 current_node) b.def) in
-      let def_vars_at_def = Terms.intersect_list Terms.equal_binderref (List.map def_vars_from_node b.def) in
+      done_refs := br :: (!done_refs);
+      let nodes_b_def = get_compatible_def_nodes (!seen_refs) b l in    
+      let def_vars_above_def = Terms.intersect_list (==) (List.map (get_def_vars_above2 current_node) nodes_b_def) in
+      let def_vars_at_def = Terms.intersect_list Terms.equal_binderref (List.map def_vars_from_node nodes_b_def) in
       (* put links for the substitution b.args_at_creation -> l *)
       let bindex = b.args_at_creation in
       List.iter2 (fun b t -> b.ri_link <- TLink t) bindex l;
       (* add facts *)
-      List.iter (fun b -> 
-	Terms.add_binderref (b, List.map (fun ri -> match ri.ri_link with
+      List.iter (fun b ->
+	let new_br = (b, List.map (fun ri -> match ri.ri_link with
 	  NoLink -> Terms.term_from_repl_index ri
-	| TLink t' -> t') b.args_at_creation) seen_refs
+	| TLink t' -> t') b.args_at_creation)
+	in
+	Terms.add_binderref new_br seen_refs;
+	Terms.add_binderref new_br done_refs
 	  ) def_vars_above_def;
       (* compute arguments of recursive call *)
       let def_vars_at_def' = Terms.copy_def_list Terms.Links_RI def_vars_at_def in
+      List.iter (fun br -> Terms.add_binderref br seen_refs) def_vars_at_def';
       (* remove the links *)
       List.iter (fun b -> b.ri_link <- NoLink) bindex;
       (* recursive call *)
-      List.iter (add_def_vars current_node seen_refs) def_vars_at_def'
+      List.iter (add_def_vars current_node seen_refs done_refs) def_vars_at_def'
     end
 
 (* Take into account facts that must be true because a block of code
@@ -1279,14 +1304,28 @@ let true_facts_from_node current_node_opt n =
   | None -> 
       n.true_facts_at_def
 
-let rec add_facts current_node fact_accu seen_refs ((b,l) as br) =
+(* [add_facts] collects the facts that are known to hold when [br = b[l]]
+   is defined. The facts are collected in [fact_accu].
+   - look for definitions n of binders b,
+   - substitute l for b.args_at_creation in n.true_facts_at_def and
+     add these facts to [fact_accu]
+   - substitute l for b.args_at_creation in n.def_vars_at_def and
+     continue recursively with these definitions 
+   - If there are several definitions of b, take the intersection
+     of lists of facts/defined vars. ("or" would be more precise
+     but difficult to implement) 
+   - Do not reconsider an already seen pair (b,l), to avoid loops.
+     The pairs (b,l) already seen are stored in [done_refs]. *)
+
+let rec add_facts current_node fact_accu seen_refs done_refs ((b,l) as br) =
   (* print_string "Is defined "; Display.display_var b l; print_newline(); *)
   if (List.for_all (check_non_nested [] [b]) l) &&
-    (not (Terms.mem_binderref br (!seen_refs))) then
+    (not (Terms.mem_binderref br (!done_refs))) then
     begin
-      seen_refs := br :: (!seen_refs);
-      let true_facts_at_def = filter_ifletfindres (Terms.intersect_list Terms.equal_terms (List.map (true_facts_from_node current_node) b.def)) in
-      let def_vars_at_def = Terms.intersect_list Terms.equal_binderref (List.map def_vars_from_node b.def) in
+      done_refs := br :: (!done_refs);
+      let nodes_b_def = get_compatible_def_nodes (!seen_refs) b l in    
+      let true_facts_at_def = filter_ifletfindres (Terms.intersect_list Terms.equal_terms (List.map (true_facts_from_node current_node) nodes_b_def)) in
+      let def_vars_at_def = Terms.intersect_list Terms.equal_binderref (List.map def_vars_from_node nodes_b_def) in
       (* put links for the substitution b.args_at_creation -> l *)
       let bindex = b.args_at_creation in
       List.iter2 (fun b t -> b.ri_link <- TLink t) bindex l;
@@ -1300,12 +1339,13 @@ let rec add_facts current_node fact_accu seen_refs ((b,l) as br) =
 	  ) true_facts_at_def;
       (* compute arguments of recursive call *)
       let def_vars_at_def' = Terms.copy_def_list Terms.Links_RI def_vars_at_def in
+      List.iter (fun br -> Terms.add_binderref br seen_refs) def_vars_at_def';
       (* remove the links *)
       List.iter (fun b -> b.ri_link <- NoLink) bindex;
       (* recursive call *)
-      List.iter (add_facts current_node fact_accu seen_refs) def_vars_at_def'
+      List.iter (add_facts current_node fact_accu seen_refs done_refs) def_vars_at_def'
     end
-
+      
 (* [def_vars_from_defined current_node def_list] returns the variables that
    are known to be defined when the condition of a find with defined condition 
    [def_list] holds. [current_node] is the node of the find, at which [def_list]
@@ -1315,7 +1355,7 @@ let def_vars_from_defined current_node def_list =
   let subterms = ref [] in
   List.iter (Terms.close_def_subterm subterms) def_list;
   let seen_refs = ref [] in
-  List.iter (add_def_vars current_node seen_refs) (!subterms);
+  List.iter (add_def_vars current_node seen_refs (ref [])) (!subterms);
   !seen_refs
 
 (* [facts_from_defined current_node def_list] returns the facts that
@@ -1328,7 +1368,7 @@ let facts_from_defined current_node def_list =
   List.iter (Terms.close_def_subterm def_list_subterms) def_list;
   let fact_accu = ref [] in
   let seen_refs = ref [] in
-  List.iter (add_facts current_node fact_accu seen_refs) (!def_list_subterms);
+  List.iter (add_facts current_node fact_accu seen_refs (ref [])) (!def_list_subterms);
   !fact_accu
 
 (* [get_def_vars_at fact_info] returns the variables that are known
@@ -1338,7 +1378,7 @@ let get_def_vars_at = function
     Some (_,def_vars,n) ->
       let seen_refs = ref (get_def_vars_above n) in
       (* Note: def_vars contains n.def_vars_at_def *)
-      List.iter (add_def_vars (Some n) seen_refs) def_vars;
+      List.iter (add_def_vars (Some n) seen_refs (ref [])) def_vars;
       !seen_refs
   | None -> []
 
@@ -1350,11 +1390,19 @@ let get_facts_at = function
   | Some(true_facts, def_vars, n) ->
       let fact_accu = ref (filter_ifletfindres true_facts) in
       (* Note: def_vars contains n.def_vars_at_def *)
-      List.iter (add_facts (Some n) fact_accu (ref [])) def_vars;
+      List.iter (add_facts (Some n) fact_accu (ref []) (ref [])) def_vars;
       !fact_accu
 
 (* Functions useful to simplify def_list *)
 
+(* [filter_def_list accu l] returns a def_list that contains
+   all elements of [accu] and [l] except the elements whose definition
+   is implied by the definition of some other element of [l].
+   The typical call is [filter_def_list [] l], which returns 
+   a def_list that contains all elements of [l] except 
+   the elements whose definition is implied by the definition 
+   of some other element.*)
+	
 let rec filter_def_list accu = function
     [] -> accu
   | (br::l) ->
@@ -1362,6 +1410,12 @@ let rec filter_def_list accu = function
       let accu' = Terms.setminus_binderref accu implied_br in
       let l' = Terms.setminus_binderref l implied_br in
       filter_def_list (br::accu') l'
+
+(* [remove_subterms accu l] returns a def_list that contains
+   all elements of [accu] and [l] except elements that
+   also occur as subterms in [l].
+   The typical call is  [remove_subterms [] l], which returns
+   [l] with elements that occur as subterms removed. *)
 
 let rec remove_subterms accu = function
     [] -> accu
@@ -1372,24 +1426,27 @@ let rec remove_subterms accu = function
       let l' = Terms.setminus_binderref l (!subterms) in
       remove_subterms (br::accu') l' 
 
+(* [eq_deflists dl dl'] returns true when the two def_list [dl]
+   and [dl'] are equal (by checking mutual inclusion) *)
+	
 let eq_deflists dl dl' =
   (List.for_all (fun br' -> Terms.mem_binderref br' dl) dl') &&
   (List.for_all (fun br -> Terms.mem_binderref br dl') dl) 
 
 (*****
-   Show that elements of the array b at different indices are always
-   different (up to negligible probability).
+   [check_distinct b g] shows that elements of the array [b] 
+   at different indices are always different (up to negligible probability).
+   [g] is the full game.
    This is useful for showing secrecy of a key.
  *****)
 
 
-let make_indexes b =
+let make_indexes cur_array =
   List.map (fun t -> 
-    Terms.term_from_repl_index (Terms.new_repl_index t)) b.args_at_creation
+    Terms.term_from_repl_index (Terms.new_repl_index t)) cur_array
 
 let collect_facts accu (def,bindex,index) =
   let fact_accu = ref accu in
-  let seen_refs = ref [] in
   (* add facts *)
   List.iter (fun f -> 
     let f = Terms.subst bindex index f in
@@ -1397,7 +1454,7 @@ let collect_facts accu (def,bindex,index) =
       fact_accu := f :: (!fact_accu)) (filter_ifletfindres def.true_facts_at_def);
   (* recursive call *)
   List.iter (fun (b',l') ->
-    add_facts None fact_accu seen_refs (b', List.map (Terms.subst bindex index) l')
+    add_facts None fact_accu (ref []) (ref []) (b', List.map (Terms.subst bindex index) l')
       ) def.def_vars_at_def;
   (* Result *)
   !fact_accu
@@ -1414,8 +1471,8 @@ let rec collect_facts_list bindex index1 = function
 let check_distinct b g =
   Proba.reset [] g;
   Terms.build_def_process None g.proc;
-  let index1 = make_indexes b in
-  let index2 = make_indexes b in
+  let index1 = make_indexes b.args_at_creation in
+  let index2 = make_indexes b.args_at_creation in
   let diff_index = Terms.make_or_list (List.map2 Terms.make_diff index1 index2) in
   let bindex = b.args_at_creation in
   let d1withfacts = collect_facts_list bindex index1 b.def in
@@ -1484,7 +1541,9 @@ let check_distinct b g =
         *)
 
 
-(***** Check correspondence assertions *****)
+(***** Check correspondence assertions 
+       [check_corresp (t1,t2) g] checks that the correspondence
+       [(t1,t2)] holds in the game [g] *****)
 
 (* [get_var_link] function associated to [guess_by_matching].
    See the interface of [Terms.match_funapp] for the 
@@ -1510,7 +1569,7 @@ let rec guess_by_matching simp_facts next_f t t' () =
       end;
       next_f()
   | FunApp _ ->
-      Terms.match_funapp (guess_by_matching simp_facts) get_var_link_g next_f (try_no_var simp_facts) next_f t t' ()
+      Terms.match_funapp (guess_by_matching simp_facts) get_var_link_g next_f simp_facts next_f t t' ()
   | Var _ | ReplIndex _ | TestE _ | FindE _ | LetE _ | ResE _ | EventAbortE _ ->
       Parsing_helper.internal_error "Var with arguments, replication indices, if, find, let, and new should not occur in guess_by_matching"
 
@@ -1539,7 +1598,7 @@ let show_fact facts fact =
   Terms.auto_cleanup (fun () ->
       try
         ignore(simplif_add no_dependency_anal facts (Terms.make_not fact));
-(*	let r = simplif_add no_dependency_anal facts (Terms.make_not fact) in
+	(*let r = simplif_add no_dependency_anal facts (Terms.make_not fact) in
 	print_string "Failed to prove "; 
 	Display.display_term fact;
 	print_newline();
@@ -1547,7 +1606,7 @@ let show_fact facts fact =
 	display_facts r; *)
 	false
       with Contradiction ->
-(*	print_string "Proved "; 
+	(*print_string "Proved "; 
 	Display.display_term fact;
 	print_newline();*)
 	true)
@@ -1633,7 +1692,7 @@ let rec prove_by_matching next_check simp_facts injrepidxs vars injinfo is_inj f
              it is a good heuristic, since a variable can be bound
              only when at least the root symbol is the same *)
 	  guess_by_matching_same_root (fun () ->
-(*	    print_string "Found ";
+	    (*print_string "Found ";
 	    Display.display_term fact';
 	    print_string " as instance of ";
 	    Display.display_term fact;
@@ -1696,86 +1755,166 @@ let rec check_term next_check ((_,facts2,_) as facts) injrepidxs vars injinfo = 
       end
 
 
-(* This is a modified version of add_facts/get_facts_at to give
-   advise information, to facilitate the proof of correspondences.
-   I advise (SArename b) when the intersection over all definitions
-   of b leads to losing events needed to prove the correspondence. *)
+(* [intersect_list_cases accu eq l] is a modified version of [Terms.intersect_list].
+   It returns a pair (inter_l, cases_l):
+   - [inter_l] contains the elements that appear in all lists in [l], but not in [accu]. 
+   - [cases_l] contains, for each list in [l], the elements that do not appear in [inter_l] nor in [accu]
+   The function [eq] is used for testing equality between elements. *)
 
-let intersect_list_useful_facts (is_useful, advise_ref) advice_sa_ren l =
-  let inter_l = Terms.intersect_list Terms.equal_terms l in
-  (* If a useful fact has been removed due to the intersection, 
-     advise SA renaming the variable [advice_sa_ren], to distinguish
-     cases depending on the definition of this variable. *)
-  if List.exists (fun l1 -> 
-    List.exists (fun f -> is_useful f && (not (List.exists (Terms.equal_terms f) inter_l))) l1) l then
-    advise_ref := Terms.add_eq (SArenaming advice_sa_ren) (!advise_ref);
-  inter_l
+let intersect_list_cases accu eq l =
+  let inter_l = 
+    List.filter (fun f -> not (List.exists (eq f) accu)) 
+      (Terms.intersect_list eq l)
+  in
+  let cases_l = 
+    List.map (fun fl ->
+      List.filter (fun f -> 
+	not (List.exists (eq f) inter_l ||
+             List.exists (eq f) accu)
+	  ) fl
+	) l
+  in
+  (inter_l, cases_l)
 
-let intersect_list_useful_br seen_refs l = 
-  let inter_l = Terms.intersect_list Terms.equal_binderref l in
-  let missed_br = ref [] in
-  List.iter (fun l1 ->
-    List.iter (fun br ->
-      if not (Terms.mem_binderref br seen_refs ||
-              Terms.mem_binderref br inter_l) then
-	Terms.add_binderref br missed_br) l1) l;
-  (inter_l, !missed_br)
+(* [add_facts / get_facts_at_cases] below are a modified version of
+   add_facts/get_facts_at to distinguish cases depending on the
+   definition point of variables (instead of taking intersections), to
+   facilitate the proof of correspondences.
 
-let rec add_facts ((is_useful, advise_ref) as is_useful_info) current_node fact_accu seen_refs ((b,l) as br) =
+   The collected facts are stored in [(fact_accu, fact_accu_cases)]:
+   - [fact_accu] contains the facts that known to hold
+   - [fact_accu_cases] contains facts that hold in some cases: 
+   [fact_accu_cases] is a list of list of list of facts, 
+   interpreted as a conjunction of a disjunction of a conjunction of facts.
+   This conjunction is known to hold. *)
+
+let rec add_facts current_node (fact_accu, fact_accu_cases) seen_refs done_refs ((b,l) as br) =
+  (* done_refs is always included in seen_refs *)
   (* print_string "Is defined "; Display.display_var b l; print_newline(); *)
   if (List.for_all (check_non_nested [] [b]) l) &&
-    (not (Terms.mem_binderref br (!seen_refs))) then
+    (not (Terms.mem_binderref br (!done_refs))) then
     begin
-      seen_refs := br :: (!seen_refs);
-      let true_facts_at_def = 
-	filter_ifletfindres (intersect_list_useful_facts is_useful_info b (List.map (true_facts_from_node current_node) b.def)) 
+      done_refs := br :: (!done_refs);
+      let nodes_b_def = get_compatible_def_nodes (!seen_refs) b l in    
+      let true_facts_at_def_list = 
+	List.map (fun n -> 
+	  filter_ifletfindres (true_facts_from_node current_node n)
+	    ) nodes_b_def
       in
-      let (def_vars_at_def, missed_br) = intersect_list_useful_br (!seen_refs) (List.map def_vars_from_node b.def) in
+      let def_vars_at_def_list = List.map def_vars_from_node nodes_b_def in
       (* put links for the substitution b.args_at_creation -> l *)
       let bindex = b.args_at_creation in
       List.iter2 (fun b t -> b.ri_link <- TLink t) bindex l;
-      (* add facts *)
-      List.iter (fun f -> 
-        (* b.args_at_creation -> l *)
-	let f = Terms.copy_term Terms.Links_RI f in
-	(* print_string "Adding "; Display.display_term f; print_newline(); *)
-	if not (List.exists (Terms.equal_terms f) (!fact_accu)) then
-	  fact_accu := f :: (!fact_accu)
-	  ) true_facts_at_def;
-      (* compute arguments of recursive call *)
-      let def_vars_at_def' = Terms.copy_def_list Terms.Links_RI def_vars_at_def in
-      (* binderrefs missed due to the intersection over definitions of b *)
-      let missed_br' = Terms.copy_def_list Terms.Links_RI missed_br in
+      (* rename facts *)
+      let true_facts_at_def_list' = 
+	List.map (List.map (Terms.copy_term Terms.Links_RI)) true_facts_at_def_list
+      in
+      (* rename def vars *)
+      let def_vars_at_def_list' = 
+	List.map (Terms.copy_def_list Terms.Links_RI) def_vars_at_def_list
+      in
       (* remove the links *)
       List.iter (fun b -> b.ri_link <- NoLink) bindex;
+      (* split into cases *)
+      let (true_facts_at_def_common, true_facts_at_def_cases) = 
+	intersect_list_cases (!fact_accu) Terms.equal_terms true_facts_at_def_list'
+      in
+      let (def_vars_at_def_common, def_vars_at_def_cases) =
+	intersect_list_cases (!seen_refs) Terms.equal_binderref def_vars_at_def_list'
+      in
+      fact_accu := true_facts_at_def_common @ (!fact_accu);
+      seen_refs := def_vars_at_def_common @ (!seen_refs);
       (* recursive call *)
-      List.iter (add_facts is_useful_info current_node fact_accu seen_refs) def_vars_at_def';
+      List.iter (add_facts current_node (fact_accu, fact_accu_cases) seen_refs done_refs) def_vars_at_def_common;
       (* facts that would be collected thanks to the binderrefs missed due 
 	 to the intersection over definitions of b *)
-      let missed_facts = ref [] in
-      let seen_refs_tmp = ref (!seen_refs) in
-      List.iter (add_facts is_useful_info current_node missed_facts seen_refs_tmp) missed_br';
-      if List.exists (fun f -> is_useful f && (not (List.exists (Terms.equal_terms f) (!fact_accu)))) (!missed_facts) then
-	advise_ref := Terms.add_eq (SArenaming b) (!advise_ref)	
+      let true_facts_at_def_cases =
+	List.fold_left2 (fun accu true_facts_at_def_1case missed_br ->
+	  try 
+	    let missed_facts = ref [] in
+	    let missed_facts_cases = ref [] in
+	    let seen_refs_tmp = ref (!seen_refs) in
+	    let done_refs_tmp = ref (!done_refs) in
+	    List.iter (add_facts current_node (missed_facts, missed_facts_cases) seen_refs_tmp done_refs_tmp) missed_br;
+	  (* I ignore missed_facts_cases for simplicity; taking it into account might be an improvement *)
+	    let true_facts_at_def_from_br_1case = 
+	      List.filter (fun f -> not (List.exists (Terms.equal_terms f) (!fact_accu))) (!missed_facts)
+	    in
+	    (true_facts_at_def_1case @ true_facts_at_def_from_br_1case) :: accu
+	  with Contradiction -> 
+	    (* This case cannot happen *)
+	    accu
+	      ) [] true_facts_at_def_cases def_vars_at_def_cases
+      in
+      fact_accu_cases := true_facts_at_def_cases :: (!fact_accu_cases);
     end
 
-let get_facts_at_useful_facts is_useful_info = function
-    None -> []
+let get_facts_at_cases = function
+    None -> [],[]
   | Some(true_facts, def_vars, n) ->
       let fact_accu = ref (filter_ifletfindres true_facts) in
+      let fact_accu_cases = ref [] in
       (* Note: def_vars contains n.def_vars_at_def *)
-      List.iter (add_facts is_useful_info (Some n) fact_accu (ref [])) def_vars;
-      !fact_accu
+      List.iter (add_facts (Some n) (fact_accu, fact_accu_cases) (ref []) (ref [])) def_vars;
+      !fact_accu, !fact_accu_cases
 
-let rec get_events accu = function
-    QTerm _ -> accu
-  | QAnd(t1, t2) | QOr(t1, t2) -> get_events (get_events accu t1) t2
-  | QEvent(_,t) ->
-      match t.t_desc with
-	FunApp(f,_) -> f :: accu
-      |	_ -> Parsing_helper.internal_error "Events should be function applications in Facts.get_events"
+(* [includes l1 l2] returns true when [l1] is included in [l2] *)
 
-let check_corresp (t1,t2) g =
+let includes l1 l2 =
+  List.for_all (fun f1 ->
+    List.exists (Terms.equal_terms f1) l2) l1
+
+(* [implies fll1 fll2] returns true when [fll1] implies [fll2],
+   where [fll1], [fll2] are lists of lists of facts, 
+   [ffl1 = [l1; ...; ln]] means that [fll1 = l1 || ... || ln]
+   (logical disjunction) where each list [li] represents a conjunction
+   of facts.
+     fll1 = l1 || ... || ln
+     fll2 = l'1 || ... || l'n' 
+     When for all i, there exists j such that l'j is included in li then
+     li implies l'j so li implies fll2 = l'1 || ... || l'n', and since this is
+     true for all i, fll1 = l1 || ... || ln implies fll2 = l'1 || ... || l'n'. *)
+
+let implies fll1 fll2 =
+  List.for_all (fun fl1 ->
+    List.exists (fun fl2 ->
+      includes fl2 fl1) fll2) fll1
+
+(* [simplify_cases fact_accu fact_accu_cases] returns a simplified
+   version of [fact_accu_cases].
+   [fact_accu] is a list of facts that are known to hold.
+   [fact_accu_cases] is a list of list of list of facts (3 levels of lists),
+   interpreted as a conjunction of a disjunction of a conjunction of facts. *)
+
+let simplify_cases fact_accu fact_accu_cases =
+  (* remove facts from fact_accu *)
+  let fact_accu_cases = 
+    List.map (List.map (List.filter (fun f -> not (List.exists (Terms.equal_terms f) fact_accu)))) 
+      fact_accu_cases
+  in
+  (* remove disjunctions that contain an empty conjunction, that is, true *)
+  let fact_accu_cases =
+    List.filter (fun fll ->
+      not (List.exists (fun fl -> fl == []) fll)) fact_accu_cases
+  in
+  (* inside a disjunction, if a disjunct is included in another disjunct,
+     remove the larger disjunct *)
+  (* TO DO not done for now because it seems not reduce much the number
+     of cases to consider *)
+  (* in the big conjunction, if a conjunct C1 implies an other conjunct C2,
+     remove the weaker conjunct C2 *)
+  let rec remove_implied seen = function
+      [] -> seen
+    | fll2::rest -> 
+	if (List.exists (fun fll1 -> implies fll1 fll2) seen) ||
+	   (List.exists (fun fll1 -> implies fll1 fll2) rest) then
+	  remove_implied seen rest
+	else
+	  remove_implied (fll2::seen) rest
+  in
+  remove_implied [] fact_accu_cases
+
+let check_corresp event_accu (t1,t2) g =
    Terms.auto_cleanup (fun () ->
 (* Dependency collision must be deactivated, because otherwise
    it may consider the equality between t1 and t1' below as an unlikely
@@ -1785,33 +1924,19 @@ let check_corresp (t1,t2) g =
 (*  print_string "Trying to prove ";
   Display.display_query (QEventQ(t1,t2), g);*)
   Proba.reset [] g;
-  let event_accu = ref [] in
-  Terms.build_def_process (Some event_accu) g.proc;
   let vars_t1 = ref [] in
   List.iter (fun (_, t) -> collect_vars vars_t1 t) t1;
   let vars_t1' = List.map (fun b ->
     let rec def_node = { above_node = def_node; binders = [];
 			 true_facts_at_def = []; def_vars_at_def = []; 
 			 elsefind_facts_at_def = [];
-			 future_binders = []; future_true_facts = [];
+			 future_binders = []; future_true_facts = []; n_compatible = Terms.compatible_empty;
 			 definition = DNone }
     in
     b.def <- [def_node];
     let b' = Terms.new_binder b in
     Terms.link b (TLink (Terms.term_from_binder b'));
     b') (!vars_t1)
-  in
-  (* A fact that is an event that occurs in [t2] is particularly
-     useful, since it can allow us to prove [t2].
-     We are going to advise SArename if an intersection
-     removes such a fact. These pieces of advicce are stored in
-     [advise_ref] *)
-  let advise_ref = ref [] in
-  let events_t2 = get_events [] t2 in
-  let is_useful f = 
-    match f.t_desc with
-      FunApp(f',_) -> List.memq f' events_t2 
-    | _ -> false
   in
   let collect_facts1 next_f facts injrepidxs vars (is_inj,t) =
     List.for_all (fun (t1',fact_info) ->
@@ -1828,29 +1953,63 @@ let check_corresp (t1,t2) g =
 	      let new_bend_sid = List.map Terms.new_repl_index bend_sid in
 	      let new_end_sid = List.map Terms.term_from_repl_index new_bend_sid in
 	      let eq_facts = List.map2 Terms.make_equal (List.map (Terms.copy_term Terms.Links_Vars) l) (List.map (Terms.subst bend_sid new_end_sid) l') in
-	      let new_facts = List.map (Terms.subst bend_sid new_end_sid) (get_facts_at_useful_facts (is_useful, advise_ref) fact_info) in
-(*
-              print_string "\nFound ";
+	      let (facts_common, facts_cases) = get_facts_at_cases fact_info in
+	      let new_facts = List.map (Terms.subst bend_sid new_end_sid) facts_common in
+
+              (*print_string "\nFound ";
               Display.display_term t1';
               print_string " with facts\n";
-              List.iter (fun t -> Display.display_term t; print_newline()) (eq_facts @ new_facts);
-*)
+              List.iter (fun t -> Display.display_term t; print_newline()) (eq_facts @ new_facts); 
+	      print_string "Cases:";
+	      List.iter (fun fll ->
+		print_string "BLOCK CASE\n";
+		List.iter (fun fl ->
+		  print_string "OR "; Display.display_list Display.display_term fl; print_newline()) fll;
+		) facts_cases;
+	      print_newline();*)
+
 	      let facts1 = Terms.auto_cleanup (fun () -> simplif_add_list no_dependency_anal facts new_facts) in
-(*            print_string "First step without contradiction\n"; *)
+            (*print_string "First step without contradiction\n"; *)
 	      let facts' = Terms.auto_cleanup (fun () -> simplif_add_list no_dependency_anal facts1 eq_facts) in
-(*            print_string "After simplification ";
-              display_facts facts'; *)
-	      if not is_inj then
-		next_f facts' injrepidxs (new_bend_sid @ vars)
-	      else
-		next_f facts' (new_end_sid :: injrepidxs) (new_bend_sid @ vars)
+            (*print_string "After simplification ";
+              display_facts facts';*) 
+
+	      let new_facts_cases = List.map (List.map (List.map (Terms.subst bend_sid new_end_sid)))
+		  (simplify_cases facts_common facts_cases)
+	      in
+	      
+	    (*print_string "Simplified cases:";
+	      List.iter (fun fll ->
+		print_string "BLOCK CASE\n";
+		List.iter (fun fl ->
+		  print_string "OR "; Display.display_list Display.display_term fl; print_newline()) fll;
+		) new_facts_cases;
+	      print_newline();*)
+
+	      let rec collect_facts_cases facts = function
+		  [] -> 
+		    if not is_inj then
+		      next_f facts injrepidxs (new_bend_sid @ vars)
+		    else
+		      next_f facts (new_end_sid :: injrepidxs) (new_bend_sid @ vars)
+		| f_disjunct::rest ->
+		    (* consider all possible cases in the disjunction *)
+		    List.for_all (fun fl ->
+		      try 
+			let facts' = Terms.auto_cleanup (fun () -> simplif_add_list no_dependency_anal facts fl) in
+			collect_facts_cases facts' rest
+		      with Contradiction -> 
+			true
+			) f_disjunct
+	      in
+	      collect_facts_cases facts' new_facts_cases
 	    with Contradiction -> 
-(*            print_string "Contradiction. Proof succeeded.\n";*)
+            (*print_string "Contradiction. Proof succeeded.\n";*)
 	      true
 	  else 
 	    true
       | _ -> Parsing_helper.internal_error "event expected in check_corresp"
-	    ) (!event_accu)
+	    ) event_accu
   in
   let rec collect_facts_list next_f facts injrepidxs vars = function
       [] -> next_f facts injrepidxs vars
@@ -1871,17 +2030,12 @@ let check_corresp (t1,t2) g =
     (true, Proba.final_add_proba [])
   else
     begin
-      if (!advise_ref) != [] then
-	begin
-	  print_string "User advice: to prove ";
-	  Display.display_query (QEventQ(t1,t2),{game_number = 1; proc = g.proc; current_queries = []});
-	  print_string ", you could try\n";
-	  List.iter (fun i -> print_string "  "; Display.display_instruct i; print_newline()) (!advise_ref)
-	end;
       (false, [])
     end)
 
-(***** Simplify a term knowing some true facts *****)
+(***** [simplify_term dep_info simp_facts t] simplifies a term [t] 
+       knowing some true facts [simp_facts] and using the 
+       dependency analysis [dep_info] *****)
 
 let rec simplify_term_rec dep_info simp_facts t =
   let t' = try_no_var simp_facts t in
@@ -1916,44 +2070,132 @@ let rec simplify_term_rec dep_info simp_facts t =
       let t1' = try_no_var simp_facts t1 in
       let t2' = try_no_var simp_facts t2 in
       begin
-	match t1'.t_desc, t2'.t_desc with
-	  (FunApp(f1,l1), FunApp(f2,l2)) when
-	  (f1.f_options land Settings.fopt_COMPOS) != 0 && f1 == f2 -> 
-	    simplify_term_rec dep_info simp_facts (Terms.make_and_list (List.map2 Terms.make_equal l1 l2))
-	| (Var(b1,l1), Var(b2,l2)) when
-	  (Terms.is_restr b1) &&
-	  (Proba.is_large_term t1' || Proba.is_large_term t2') && (b1 == b2) &&
-	  (Proba.add_elim_collisions b1 b1) ->
-          (* add_proba (Div(Cst 1, Card b1.btype)); * number applications *)
-	    simplify_term_rec dep_info simp_facts (Terms.make_and_list (List.map2 Terms.make_equal l1 l2))
-	| _ ->
-	    try
-	      let _ = simplif_add dep_info simp_facts t' in
-	      apply_reds simp_facts t 
-	    with Contradiction -> 
-	      Terms.make_false()
+	match 
+	  (match Terms.get_prod Terms.try_no_var_id t1' with 
+	    NoEq -> Terms.get_prod Terms.try_no_var_id t2'
+	  | x -> x)
+          (* try_no_var has always been applied to t1' and t2' before, 
+	     so I don't need to reapply it, I can use the identity instead *)
+	with
+	  NoEq ->
+	    begin
+	      match t1'.t_desc, t2'.t_desc with
+		(FunApp(f1,l1), FunApp(f2,l2)) when
+		(f1.f_options land Settings.fopt_COMPOS) != 0 && f1 == f2 -> 
+		  simplify_term_rec dep_info simp_facts (Terms.make_and_list (List.map2 Terms.make_equal l1 l2))
+	      | (Var(b1,l1), Var(b2,l2)) when
+		(Terms.is_restr b1) &&
+		(Proba.is_large_term t1' || Proba.is_large_term t2') && (b1 == b2) &&
+		(Proba.add_elim_collisions b1 b1) ->
+                  (* add_proba (Div(Cst 1, Card b1.btype)); * number applications *)
+		  simplify_term_rec dep_info simp_facts (Terms.make_and_list (List.map2 Terms.make_equal l1 l2))
+	      | _ ->
+		  try
+		    let _ = simplif_add dep_info simp_facts t' in
+		    let t = 
+		      match dep_info simp_facts t1' t2' with
+			Some t' -> t'
+		      | None -> t
+		    in
+		    apply_reds simp_facts t 
+		  with Contradiction -> 
+		    Terms.make_false()
+	    end
+	| (ACUN(prod, neut) | Group(prod, _, neut) | CommutGroup(prod, _, neut)) as eq_th -> 
+	    begin
+	      (* The argument of add_fact has always been simplified by Terms.apply_eq_reds 
+		 So a xor appears only when there are at least 3 factors in total.
+		 A commutative group product appears either when there are at least 3 factors,
+		 or two factors on the same side of the equality without inverse.
+		 A non-commutative group product may appear with two factors on one side and
+		 none on the other, when there is no inverse.
+		 In all cases, the simplifications FunApp/FunApp or Var/Var cannot be applied,
+		 so we just try to apply dependency analysis, and orient the equation when it fails. *)
+	      try
+		let _ = simplif_add dep_info simp_facts t' in
+		let t = 
+		  let l1 = Terms.simp_prod simp_facts (ref false) prod t1' in
+		  let l2 = Terms.simp_prod simp_facts (ref false) prod t2' in
+		  let l1' = List.map (normalize simp_facts) l1 in
+		  let l2' = List.map (normalize simp_facts) l2 in
+		  (*print_string "simplify_term "; Display.display_term t;
+		  print_string "\nfirst becomes "; Display.display_term (Terms.make_prod prod l1'); print_string " = "; Display.display_term (Terms.make_prod prod l2');
+		  print_string "\nprod dep anal\n";*)
+		  match prod_dep_anal eq_th dep_info simp_facts l1' l2' with
+		    Some t' -> (* print_string "reduces into "; Display.display_term t';*) t'
+		  | None -> (* print_string "no change\n";*) t
+		in
+		apply_reds simp_facts t 
+	      with Contradiction -> 
+		Terms.make_false()
+	    end
+	| _ -> Parsing_helper.internal_error "Expecting a group or xor theory in Facts.add_fact"
       end
   | FunApp(f, [t1;t2]) when f.f_cat == Diff ->
       let t1' = try_no_var simp_facts t1 in
       let t2' = try_no_var simp_facts t2 in
       begin
-	match t1'.t_desc, t2'.t_desc with
-	  (FunApp(f1,l1), FunApp(f2,l2)) when
-	  (f1.f_options land Settings.fopt_COMPOS) != 0 && f1 == f2 -> 
-	    simplify_term_rec dep_info simp_facts (Terms.make_or_list (List.map2 Terms.make_diff l1 l2))
-
-	| (Var(b1,l1), Var(b2,l2)) when
-	  (Terms.is_restr b1) &&
-	  (Proba.is_large_term t1' || Proba.is_large_term t2') && (b1 == b2) &&
-	  (Proba.add_elim_collisions b1 b1) ->
-          (* add_proba (Div(Cst 1, Card b1.btype)); * number applications *)
-	    simplify_term_rec dep_info simp_facts (Terms.make_or_list (List.map2 Terms.make_diff l1 l2))
-	| _ -> 
-	    try
-	      let _ = simplif_add dep_info simp_facts (Terms.make_not t') in
-	      apply_reds simp_facts t
-	    with Contradiction -> 
-	      Terms.make_true()
+	match 
+	  (match Terms.get_prod Terms.try_no_var_id t1' with 
+	    NoEq -> Terms.get_prod Terms.try_no_var_id t2'
+	  | x -> x)
+          (* try_no_var has always been applied to t1' and t2' before, 
+	     so I don't need to reapply it, I can use the identity instead *)
+	with
+	  NoEq ->
+	    begin
+	      match t1'.t_desc, t2'.t_desc with
+		(FunApp(f1,l1), FunApp(f2,l2)) when
+		(f1.f_options land Settings.fopt_COMPOS) != 0 && f1 == f2 -> 
+		  simplify_term_rec dep_info simp_facts (Terms.make_or_list (List.map2 Terms.make_diff l1 l2))
+		    
+	      | (Var(b1,l1), Var(b2,l2)) when
+		(Terms.is_restr b1) &&
+		(Proba.is_large_term t1' || Proba.is_large_term t2') && (b1 == b2) &&
+		(Proba.add_elim_collisions b1 b1) ->
+                (* add_proba (Div(Cst 1, Card b1.btype)); * number applications *)
+		  simplify_term_rec dep_info simp_facts (Terms.make_or_list (List.map2 Terms.make_diff l1 l2))
+	      | _ -> 
+		  try
+		    let _ = simplif_add dep_info simp_facts (Terms.make_not t') in
+		    let t = 
+		      match dep_info simp_facts t1' t2' with
+			Some t' -> Terms.make_not t'
+		      | None -> t
+		    in
+		    apply_reds simp_facts t
+		  with Contradiction -> 
+		    Terms.make_true()
+	    end
+	| (ACUN(prod, neut) | Group(prod, _, neut) | CommutGroup(prod, _, neut)) as eq_th -> 
+	    begin
+	      (* The argument of add_fact has always been simplified by Terms.apply_eq_reds 
+		 So a xor appears only when there are at least 3 factors in total.
+		 A commutative group product appears either when there are at least 3 factors,
+		 or two factors on the same side of the equality without inverse.
+		 A non-commutative group product may appear with two factors on one side and
+		 none on the other, when there is no inverse.
+		 In all cases, the simplifications FunApp/FunApp or Var/Var cannot be applied,
+		 so we just try to apply dependency analysis, and orient the equation when it fails. *)
+	      try
+		let _ = simplif_add dep_info simp_facts (Terms.make_not t') in
+		let t = 
+		  let l1 = Terms.simp_prod simp_facts (ref false) prod t1' in
+		  let l2 = Terms.simp_prod simp_facts (ref false) prod t2' in
+		  let l1' = List.map (normalize simp_facts) l1 in
+		  let l2' = List.map (normalize simp_facts) l2 in
+		  (*print_string "simplify_term "; Display.display_term t;
+		  print_string "\nfirst becomes "; Display.display_term (Terms.make_prod prod l1'); print_string " <> "; Display.display_term (Terms.make_prod prod l2');
+		  print_string "\nprod dep anal\n";*)
+		  match prod_dep_anal eq_th dep_info simp_facts l1' l2' with
+		    Some t' -> (* print_string "reduces into "; Display.display_term (Terms.make_not t');*) Terms.make_not t'
+		  | None -> (* print_string "no change\n";*) t
+		in
+		apply_reds simp_facts t 
+	      with Contradiction -> 
+		Terms.make_true()
+	    end
+	| _ -> Parsing_helper.internal_error "Expecting a group or xor theory in Facts.add_fact"
       end
   | _ -> apply_reds simp_facts t
 
@@ -1966,14 +2208,9 @@ let simplify_term dep_info simp_facts t =
 
 
 
-(***** Show that two terms are equal (up to negligible probability) *****
-       Terms.build_def_process must have been called so that t.t_facts has been filled.
-       "and_facts" contains facts that are known to hold, in addition to the
-       facts recorded in the process. This is useful for expressions such as
-       "t1 && t": we can consider that t1 holds when we evaluate t'. 
-
-       "and_facts" also contains facts derived by the get_elsefind_facts function
-       and are true with probability and_proba.
+(***** [check_equal t t' simp_facts], defined below, 
+       shows that two terms [t] and [t'] are equal (up to negligible probability) *****
+(see below for a more detailed interface)
 *)
 
 (* [apply_eq add_accu t equalities] applies the equalities of [equalities] 
@@ -2000,8 +2237,8 @@ let apply_eq add_accu t equalities =
       FunApp(f,[_;_]), _ when f.f_eq_theories != NoEq && f.f_eq_theories != Commut ->
       (* f is a binary function with an equational theory that is
 	 not commutativity -> it is a product-like function *)
-	let l = Terms.simp_prod Terms.try_no_var_id (ref false) Terms.equal_terms f t in
-	let l' = Terms.simp_prod Terms.try_no_var_id (ref false) Terms.equal_terms f left in
+	let l = Terms.simp_prod Terms.simp_facts_id (ref false) f t in
+	let l' = Terms.simp_prod Terms.simp_facts_id (ref false) f left in
 	begin
 	  match f.f_eq_theories with
 	    NoEq | Commut -> Parsing_helper.internal_error "Facts.match_term_root_or_prod_subterm: cases NoEq, Commut should have been eliminated"
@@ -2011,7 +2248,7 @@ let apply_eq add_accu t equalities =
 	      begin
 		try 
 		  Terms.match_AC match_term_novar get_var_link_novar Terms.default_match_error (fun rest () -> 
-		    add_accu (Terms.make_prod f (right::rest))) Terms.try_no_var_id f true l l' ()
+		    add_accu (Terms.make_prod f (right::rest))) Terms.simp_facts_id f true l l' ()
 		with NoMatch -> ()
 	      end
 	  | Assoc | AssocN _ | Group _ -> 
@@ -2019,7 +2256,7 @@ let apply_eq add_accu t equalities =
 	      begin
 		try
 		  Terms.match_assoc_subterm match_term_novar get_var_link_novar (fun rest_left rest_right () ->
-		    add_accu (Terms.make_prod f (rest_left @ right::rest_right)); raise NoMatch) Terms.try_no_var_id f l l' ()
+		    add_accu (Terms.make_prod f (rest_left @ right::rest_right)); raise NoMatch) Terms.simp_facts_id f l l' ()
 		with NoMatch -> ()
 	      end
 	end
@@ -2035,9 +2272,9 @@ let apply_eq add_accu t equalities =
 
 let apply_colls reduce_rec add_accu t colls = 
   try 
-    apply_collisions_at_root_once reduce_rec Terms.try_no_var_id (fun t' -> add_accu t'; raise NoMatch) t colls
+    apply_collisions_at_root_once reduce_rec Terms.simp_facts_id (fun t' -> add_accu t'; raise NoMatch) t colls
   with NoMatch -> ()
-
+    
 (* [simp_eq_diff add_accu t] applies a bunch of simplifications specific 
    to equalities to term [t].
    It calls the function [add_accu] on each obtained term. *)
@@ -2124,7 +2361,7 @@ let rec apply_eq_and_collisions_subterms_once reduce_rec equalities add_accu t =
       apply_eq add_accu t equalities;
       apply_colls reduce_rec_impossible add_accu t f.f_statements;
       apply_colls reduce_rec add_accu t f.f_collisions;
-      let l = Terms.simp_prod Terms.try_no_var_id (ref false) Terms.equal_terms f t in
+      let l = Terms.simp_prod Terms.simp_facts_id (ref false) f t in
       apply_list (fun l' -> add_accu (Terms.make_prod f l')) [] l
   | FunApp(f, ([t1;t2] as l)) when f.f_cat == Equal || f.f_cat == Diff ->
       apply_eq add_accu t equalities;
@@ -2145,7 +2382,7 @@ let rec apply_eq_and_collisions_subterms_once reduce_rec equalities add_accu t =
 	| CommutGroup(prod, inv, neut) ->
 	    let rebuild_term t'' = 
 	      (* calls add_accu on a term equal to FunApp(f, [t'', neut]) *)
-	      let l = Terms.simp_prod Terms.try_no_var_id (ref false) Terms.equal_terms prod t'' in
+	      let l = Terms.simp_prod Terms.simp_facts_id (ref false) prod t'' in
 	      let linv, lno_inv = List.partition (Terms.is_fun inv) l in
 	      let linv_removed = List.map (function { t_desc = FunApp(f,[t]) } when f == inv -> t | _ -> assert false) linv in
 	      add_accu (Terms.build_term2 t (FunApp(f, [ Terms.make_prod prod lno_inv; 
@@ -2161,7 +2398,7 @@ let rec apply_eq_and_collisions_subterms_once reduce_rec equalities add_accu t =
 	| Group(prod, inv, neut) ->
 	    let rebuild_term t'' =
 		  (* calls add_accu on a term equal to FunApp(f, [t'', neut]) *)
-		  let l = Terms.simp_prod Terms.try_no_var_id (ref false) Terms.equal_terms prod t'' in
+		  let l = Terms.simp_prod Terms.simp_facts_id (ref false) prod t'' in
 		  let (inv_first, rest) = first_inv inv l in
 		  let (inv_last_rev, rest_rev) = first_inv inv (List.rev rest) in
 		(* if inv_first = [x1...xk], inv_last_rev = [y1...yl],
@@ -2173,8 +2410,8 @@ let rec apply_eq_and_collisions_subterms_once reduce_rec equalities add_accu t =
 		  add_accu (Terms.build_term2 t (FunApp(f, [ Terms.make_prod prod (List.rev rest_rev) ; 
 							     Terms.make_prod prod (List.rev_append inv_first inv_last_rev)])))
 	    in
-	    let l1 = Terms.simp_prod Terms.try_no_var_id (ref false) Terms.equal_terms prod (Terms.app prod [t1; Terms.app inv [t2]]) in
-	    let l2 = Terms.remove_inverse_ends Terms.try_no_var_id (ref false) (prod, inv, neut) Terms.equal_terms l1 in
+	    let l1 = Terms.simp_prod Terms.simp_facts_id (ref false) prod (Terms.app prod [t1; Terms.app inv [t2]]) in
+	    let l2 = Terms.remove_inverse_ends Terms.simp_facts_id (ref false) (prod, inv, neut) l1 in
 	    let rec apply_up_to_roll seen' rest' =
 	      let t' = Terms.make_prod prod (rest' @ (List.rev seen')) in
 	      (* Simplify the term t' = t2.t1^-1 just on the product level.
@@ -2190,9 +2427,9 @@ let rec apply_eq_and_collisions_subterms_once reduce_rec equalities add_accu t =
 	    let l3 = List.rev (List.map (Terms.compute_inv Terms.try_no_var_id (ref false) (prod, inv, neut)) l2) in
 	    apply_up_to_roll [] l3;
 	    (* Simplify smaller subterms *)
-	    let l1 = Terms.simp_prod Terms.try_no_var_id (ref false) Terms.equal_terms prod t1 in
+	    let l1 = Terms.simp_prod Terms.simp_facts_id (ref false) prod t1 in
 	    apply_list (fun l' -> add_accu (Terms.app f [Terms.make_prod prod l'; t2])) [] l1;
-	    let l2 = Terms.simp_prod Terms.try_no_var_id (ref false) Terms.equal_terms prod t2 in
+	    let l2 = Terms.simp_prod Terms.simp_facts_id (ref false) prod t2 in
 	    apply_list (fun l' -> add_accu (Terms.app f [t1; Terms.make_prod prod l'])) [] l2
 	| _ -> 
 	    apply_list (fun l' -> add_accu (Terms.build_term2 t (FunApp(f, l')))) [] l
@@ -2213,7 +2450,7 @@ rewrites instead of just one.
 *)
 
 let apply_eq_and_collisions_subterms_once reduce_rec equalities add_accu t =
-  let t' = Terms.apply_eq_reds Terms.try_no_var_id reduced t in
+  let t' = Terms.apply_eq_reds Terms.simp_facts_id reduced t in
   if !reduced then add_accu t'; 
   apply_eq_and_collisions_subterms_once reduce_rec equalities add_accu t
 
@@ -2265,17 +2502,14 @@ let rec test_equal depth reduce_rec equalities t right_terms seen_right_terms =
 			   )) right_terms;
   test_equal (depth-1) reduce_rec equalities t (!new_terms) seen_terms
 
+(* [check_equal t t' simp_facts] returns true when [t] and [t'] are
+   proved equal when the facts in [simp_facts] are true.
+   It is called from transf_insert_replace.ml. The probability of collisions
+   eliminated to reach that result is taken into account by module [Proba]. *)
 
-let check_equal g t t' and_facts and_proba =
-  Proba.reset [] g;
-  try 
-    let facts' = get_facts_at t.t_facts in
-      (*      print_string "Facts.check_equal: facts=";
-              Display.display_list Display.display_term (facts'@and_facts);
-              print_newline ();*)
-    let simp_facts = Terms.auto_cleanup (fun () -> simplif_add_list no_dependency_anal ([],[],[]) (facts' @ and_facts)) in
-    let r = (Terms.simp_equal_terms (try_no_var simp_facts) t t') || 
-    (Terms.simp_equal_terms (try_no_var simp_facts) (simplify_term no_dependency_anal simp_facts t) (simplify_term no_dependency_anal simp_facts t')) ||
+let check_equal t t' simp_facts  =
+    (Terms.simp_equal_terms simp_facts true t t') || 
+    (Terms.simp_equal_terms simp_facts true (simplify_term no_dependency_anal simp_facts t) (simplify_term no_dependency_anal simp_facts t')) ||
     (let equalities = ref [] in
     let (subst, facts, elsefind) = simp_facts in
     List.iter (fun t ->
@@ -2290,27 +2524,22 @@ let check_equal g t t' and_facts and_proba =
 	) (subst @ facts);
     test_equal (!Settings.max_replace_depth) (reduce_rec simp_facts) (!equalities) t [t'] []
     )
-    in
-    (* Add probability for eliminated collisions *)
-    let proba = Proba.final_add_proba [] in
-    (r, and_proba @ proba)
-  with Contradiction ->
-(*   print_string "Got contradiction";
-    print_newline ();*)
-    let proba = Proba.final_add_proba [] in
-    (* May happen when the program point of t is in fact unreachable
-       I say true anyway because the program point is unreachable. *)
-    (true, and_proba @ proba)
 
 
 
 
-(**** for debug: shows the derived facts at the given occurence ***)
+(**** for debug: 
+      [display_facts_at p occ] displays the facts that are known
+      to hold at the program point (occurrence) [occ] of the process [p].
+
+      [display_fact_info] performs the actual display.
+      The other functions look for the occurrence [occ] inside the
+      process [p]. ***)
 
 let display_fact_info fact_info = 
   List.iter (fun f -> Display.display_term f; print_newline()) 
     (get_facts_at fact_info)
-
+  
 let rec display_facts_at p occ =
   if p.i_occ = occ then
     display_fact_info p.i_facts

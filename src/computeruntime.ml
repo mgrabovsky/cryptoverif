@@ -56,8 +56,20 @@ let rec make_length_term g t =
       Maxlength(g, Terms.term_from_binder b)
   | ReplIndex b ->
       Maxlength(g, Terms.term_from_repl_index b)
-  | TestE _ | LetE _ | FindE _ | ResE _ | EventAbortE _ ->
-      Parsing_helper.internal_error "If/let/find/new/event not allowed in make_length_term"
+  | LetE(_,_,t2,t3opt) ->
+      begin
+	match t3opt with 
+	  None -> make_length_term g t2
+	| Some t3 -> Max([make_length_term g t2; make_length_term g t3])
+      end
+  | TestE(_, t2, t3) ->
+      Max([make_length_term g t2; make_length_term g t3])
+  | FindE(l,t,_) ->
+      Max((make_length_term g t) :: (List.map (fun (bl, def_list, t, t1) -> make_length_term g t1) l))
+  | ResE(_, t) ->
+      make_length_term g t
+  | EventAbortE _ ->
+      Zero
 
 and make_length g = function
     [] -> []
@@ -67,7 +79,7 @@ and make_length g = function
 	l'
       else
 	(make_length_term g t)::l'   (*Maxlength(g, t)::l'*)
-
+	  
 (* (!Settings.ignore_small_times)>0 when many details should be ignored.*)
 
 let empty_game = { proc = Terms.iproc_from_desc Nil; game_number = -1; current_queries = [] }
@@ -78,7 +90,7 @@ let names_to_discharge = ref []
 let rec time_list f = function
     [] -> Polynom.zero
   | (a::l) -> Polynom.sum (f a) (time_list f l)
-
+	
 let rec time_for_term_in_context t (args, il, ik, repl_lhs, indices_exp) =
   let targs = time_list time_term args in
   if (!Settings.ignore_small_times)>0 then
@@ -289,7 +301,7 @@ let rec time_process p =
 	ttl
       else
 	Polynom.sum ttl (Polynom.probaf_to_polynom (ActTime(AIn(List.length tl), [])))
-
+      
 and time_oprocess p = 
   match p.p_desc with
     Yield -> 

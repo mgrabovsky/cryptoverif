@@ -89,7 +89,7 @@ let simplify_statement (vl, t) =
   let glob_reduced = ref false in
   let rec reduce_rec t =
     let reduced = ref false in
-    let t' = Terms.apply_eq_reds Terms.try_no_var_id reduced t in
+    let t' = Terms.apply_eq_reds Terms.simp_facts_id reduced t in
     if !reduced then 
       begin
 	glob_reduced := true;
@@ -155,7 +155,7 @@ let simplify_statement (vl, t) =
 	record_statement ([], vl, Terms.make_equal t1 t2, Zero, Terms.make_false())
     | _ -> 
 	record_statement ([], vl, tnew, Zero, Terms.make_true())
-
+	  
 let record_collision ((_, _, t1, _,t2) as collision) =
   match t1.t_desc with
     FunApp(f, l) -> 
@@ -198,7 +198,7 @@ let anal_file s =
             Settings.equivs := equivs;
             Settings.move_new_eq := new_new_eq;
             Settings.collect_public_vars queries;
-
+            
             (*
               List.iter Display.display_statement statements;
               print_newline();

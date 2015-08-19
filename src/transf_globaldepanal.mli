@@ -55,9 +55,27 @@ open Types
 (* Local advice *)
 val advise : instruct list ref
 
-val check_all_deps : binder -> game ->
-  (game * ((repl_index list * term list) * (term * term * typet list)) list) option
+(* [check_all_deps b0 init_proba_state g] is the entry point for calling 
+   the dependency analysis from simplification.
+   [b0] is the variable on which we perform the dependency analysis.
+   [init_proba_state] contains collisions eliminated by before the dependency analysis,
+   in previous passes of simplification.
+   [g] is the full game to analyze. *)
+val check_all_deps : binder ->
+  simplify_internal_info_t *
+    ((binderref * binderref) list * term * term list *
+       repl_index list * repl_index list *
+       repl_index list * term * term * binder *
+       term list option * typet list) list -> 
+	 game -> game option
 
-(* When calling [main], the terms and processes in the input game must be physically
+(* [main b0 coll_elim g] is the entry point for calling
+   the dependency analysis alone.
+   [b0] is the variable on which we perform the dependency analysis.
+   [coll_elim] is a list of occurrences, types or variable names 
+   for which we allow eliminating collisions even if they are not [large].
+   [g] is the full game to analyze.
+
+   When calling [main], the terms and processes in the input game must be physically
    distinct, since [Terms.build_def_process] is called.  *)
 val main : binder -> string list -> game_transformer

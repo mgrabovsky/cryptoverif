@@ -242,17 +242,6 @@ let simplify_process g =
   let proba = Proba.final_add_proba [] in
   (p', proba, simplif_transfos)
 
-
-let rec cross_product l1 = function
-    [] -> []
-  | (a::l) -> (List.map (fun l1i -> (l1i,a)) l1) @ (cross_product l1 l)
-
-let rec split_every n = function
-    [] -> []
-  | l ->
-      let (l1,l2) = Terms.split n l in
-      l1 :: (split_every n l2)
-
 let check_no_ifletfind t =
   if not (Terms.check_no_ifletfindres t) then
     Parsing_helper.input_error "I cannot handle if, let, find, new inside the definition condition of a find. Sorry." t.t_loc
@@ -260,93 +249,58 @@ let check_no_ifletfind t =
 let check_no_ifletfind_br (_,l) =
   List.iter check_no_ifletfind l
 
-let pairing_expand a l aex lex =
-  match aex, lex with
-    None, None -> None
-  | Some(fa,la),None -> Some(fa, List.map (fun lai -> (lai,l)) la)
-  | None,Some(fl,ll) -> Some(fl, List.map (fun lli -> (a,lli)) ll)
-  | Some(fa,la),Some(fl,ll) ->
-      let len = List.length la in
-      Some((fun l -> let l' = split_every len l in
-                     fl (List.map fa l')), cross_product la ll)
+(* Check if a term/pattern needs to be modified by expansion *)
 
-let extract_elem = function
-    [p] -> p
-  | _ -> Parsing_helper.internal_error "list with single element expected"
+let rec need_expand t =
+  match t.t_desc with
+    Var(_,l) | FunApp(_,l) -> List.exists need_expand l
+  | ReplIndex _ -> false
+  | _ -> true
 
-let always_some t = function
-    None -> (extract_elem, [t])
-  | Some(f,l) -> (f,l)
-
+let rec need_expand_pat = function
+    PatVar _ -> false
+  | PatTuple(_,l) -> List.exists need_expand_pat l
+  | PatEqual t -> need_expand t
+    
 (* Expand term to term. Useful for conditions of find when they cannot be expanded to processes.
    Guarantees the invariant that if/let/find/res terms occur only in
    - conditions of find
    - at [ ] positions in TestE(t,[then],[else]), ResE(b,[...]), LetE(b,t,[in],[else]), 
      FindE((bl,def_list,[cond],[then]) list,[else])
+
+   context = fun term -> C[term]
 *)
 
-let rec pseudo_expand_term t = 
+let rec pseudo_expand_term t context = 
   match t.t_desc with
     Var(b,l) ->
-      begin
-        match pseudo_expand_term_list l with
-          None -> None
-        | Some(f,l') ->
-            Some(f, List.map (fun li -> Terms.build_term t (Var(b,li))) l')
-      end 
-  | ReplIndex _ -> None 
+      pseudo_expand_term_list l (fun li -> context (Terms.build_term t (Var(b,li))))
+  | ReplIndex _ -> context t
   | FunApp(f,l) ->
-      begin
-        match pseudo_expand_term_list l with
-          None -> None
-        | Some(f',l') -> Some(f', List.map (fun li -> Terms.build_term t (FunApp(f,li))) l')
-      end
+      pseudo_expand_term_list l (fun li -> context (Terms.build_term t (FunApp(f,li))))
   | TestE(t1,t2,t3) ->
-      (* I always expand this test *)
-      let (f2, l2) = always_some t2 (pseudo_expand_term t2) in
-      let (f3, l3) = always_some t3 (pseudo_expand_term t3) in
-      let (f1, l1) = always_some t1 (pseudo_expand_term t1) in
-      let len2 = List.length l2 in
-      Some((fun l -> 
-	let (l2part, l3part) = Terms.split len2 l in
-	f1 (List.map (fun t1i -> 
+      let t2' = pseudo_expand_term t2 context in
+      let t3' = pseudo_expand_term t3 context in
+      pseudo_expand_term t1 (fun t1i ->
           (* Some trivial simplifications *)
-          if Terms.is_true t1i then f2 l2part else
-          if Terms.is_false t1i then f3 l3part else
-          let t2' = f2 l2part in Terms.build_term t2' (TestE(t1i, t2', f3 l3part))) l1)), l2 @ l3)
+        if Terms.is_true t1i then t2' else
+        if Terms.is_false t1i then t3' else
+	Terms.build_term t2' (TestE(t1i, t2', t3')))
   | LetE(pat, t1, t2, topt) ->
-      let (fpat,lpat) = always_some pat (pseudo_expand_pat pat) in
-      let (f1,l1) = always_some t1 (pseudo_expand_term t1) in
-      let (f2,l2) = always_some t2 (pseudo_expand_term t2) in
-      begin
-	match topt with
-	  None ->
-	    Some ((fun l -> 
-	      f1 (List.map (fun t1i -> 
-		fpat (List.map (fun pati ->
-                  let t2' = f2 l in
-		  Terms.build_term t2' (LetE(pati, t1i, t2', None))) lpat)) l1)), l2)
-	| Some t3 ->
-	    let (f3,l3) = always_some t3 (pseudo_expand_term t3) in
-	    let len2 = List.length l2 in
-	    Some ((fun l -> 
-	      let (l2part, l3part) = Terms.split len2 l in
-	      f1 (List.map (fun t1i -> 
-		fpat (List.map (fun pati ->
-                  let t2' = f2 l2part in
-		  Terms.build_term t2' (LetE(pati, t1i, t2', Some (f3 l3part)))) lpat)) l1)), l2 @ l3)
-      end
+      let t2' = pseudo_expand_term t2 context in
+      let topt' = match topt with
+	None -> None
+      | Some t3 -> Some (pseudo_expand_term t3 context)
+      in
+      pseudo_expand_term t1 (fun t1i ->
+	pseudo_expand_pat pat (fun pati ->
+	  Terms.build_term t2' (LetE(pati, t1i, t2', topt'))))
   | FindE(l0, t3, find_info) ->
-      let rec expand_cond_find_list = function
-	  [] -> None
+      let rec expand_cond_find_list l context =
+	match l with
+	  [] -> context []
 	| ((bl, def_list, t1, t2)::restl) ->
 	    List.iter check_no_ifletfind_br def_list;
-	    let rest_lex = expand_cond_find_list restl in
-	    let ex1 = pseudo_expand_term t1 in
-	    let ex1 = 
-	      match ex1 with
-		None -> None
-	      | Some(f,l) ->
                   (* I move something outside a condition of
                      "find" only when bl and def_list are empty.  
                      I could be more precise, I would need to
@@ -356,229 +310,149 @@ let rec pseudo_expand_term t =
                      "defined" condition---otherwise, some variable
                      accesses may not be defined after the
                      transformation *)
-                  if bl != [] || def_list != [] then
-                    Some(extract_elem, [f l])
-                  else 
-                    ex1
-		  (*let tf = f (List.map (fun t -> 
-		    let b = Terms.create_binder "tmp"
-			      (Terms.new_vname()) t.t_type []
-		    in 
-		    Terms.build_term t (Var(b,[]))) l) 
-		  in
-		  if List.exists (fun b -> Terms.refers_to b tf) bl || [tf refers to variables in def_list] then
-		    Some(extract_elem, [f l]) (* We cannot move the condition of the find outside, because it refers to variables defined in the find. In this case, we leave the term without expanding it. *)
-                  else
-                    ex1*)
-            in
-	    match pairing_expand t1 restl ex1 rest_lex with
-	      None -> None
-	    | Some(f,l') -> Some(f, List.map (fun (a,l'') -> (bl, def_list, a, t2)::l'') l')
+            if bl != [] || def_list != [] then
+	      expand_cond_find_list restl (fun li ->
+		context ((bl, def_list, pseudo_expand_term t1 (fun t -> t), t2)::li))
+	    else
+	      pseudo_expand_term t1 (fun t1i ->
+		expand_cond_find_list restl (fun li -> context ((bl, def_list, t1i, t2)::li)))
       in
 
-      let rec expand_res_find_list = function
-	  [] -> ((fun l -> []), [])
+      let rec expand_res_find_list l context =
+	match l with
+	  [] -> []
 	| ((bl, def_list, t1, t2)::restl) ->
-	    let (frestl, lrestl) = expand_res_find_list restl in
-	    let (f2, l2) = always_some t2 (pseudo_expand_term t2) in
-	    let len2 = List.length l2 in
-	    ((fun l -> 
-	      let (l2part, l3part) = Terms.split len2 l in
-	      (bl, def_list, t1, f2 l2part) :: (frestl l3part)),
-	     l2 @ lrestl)
+	    (bl, def_list, t1, pseudo_expand_term t2 context) ::
+	    (expand_res_find_list restl context)
       in 
-      let (f2, l2) = expand_res_find_list l0 in
-      let (f3, l3) = always_some t3 (pseudo_expand_term t3) in
-      let len3 = List.length l3 in
-      Some((fun l -> 
-	let (l3part, l2part) = Terms.split len3 l in
-	let expanded_res_l = f2 l2part in
-	let expanded_res_t3 = f3 l3part in
-	let (f1, l1) = always_some expanded_res_l (expand_cond_find_list expanded_res_l) in
-        f1 (List.map (fun l1i -> Terms.build_term expanded_res_t3 (FindE(l1i, expanded_res_t3, find_info))) l1)), l3 @ l2)
+      let expanded_res_l = expand_res_find_list l0 context in
+      let expanded_res_t3 = pseudo_expand_term t3 context in
+      expand_cond_find_list expanded_res_l (fun l1i ->
+	Terms.build_term expanded_res_t3 (FindE(l1i, expanded_res_t3, find_info)))
   | ResE(b, t) ->
-      let (f,l) = always_some t (pseudo_expand_term t) in
-      Some((fun l -> let t' = f l in Terms.build_term t' (ResE(b, t'))), l)
+      let t' = pseudo_expand_term t context in
+      Terms.build_term t' (ResE(b, t'))
   | EventAbortE _ ->
       Parsing_helper.internal_error "Events should not occur in conditions of find before expansion"
 
-and pseudo_expand_term_list = function
-  [] -> None
-| (a::l) -> 
-    let aex = pseudo_expand_term a in
-    let lex = pseudo_expand_term_list l in
-    match pairing_expand a l aex lex with
-      None -> None
-    | Some(f,l') -> Some(f, List.map (fun (a,l'') -> a::l'') l')
+and pseudo_expand_term_list l context =
+  match l with
+    [] -> context []
+  | (a::l) -> 
+      pseudo_expand_term a (fun a' ->
+	pseudo_expand_term_list l (fun l' -> context (a'::l')))
 
-and pseudo_expand_pat = function
-    PatVar b -> None
-  | PatTuple (ft,l) -> 
-      begin
-	match pseudo_expand_pat_list l with
-	  None -> None
-	| Some(f,l') -> Some(f, List.map (fun li -> PatTuple (ft,li)) l')
-      end 
-  | PatEqual t -> 
-      begin
-	match pseudo_expand_term t with
-	  None -> None
-	| Some(f,l) -> Some (f, List.map (fun ti -> PatEqual ti) l)
-      end
+and pseudo_expand_pat pat context =
+  match pat with
+    PatVar b -> context (PatVar b)
+  | PatTuple (ft,l) ->
+      pseudo_expand_pat_list l (fun li -> context (PatTuple (ft,li)))
+  | PatEqual t ->
+      pseudo_expand_term t (fun ti -> context (PatEqual ti))
 
-and pseudo_expand_pat_list = function
-  [] -> None
-| (a::l) -> 
-    let aex = pseudo_expand_pat a in
-    let lex = pseudo_expand_pat_list l in
-    match pairing_expand a l aex lex with
-      None -> None
-    | Some(f,l') -> Some(f, List.map (fun (a,l'') -> a::l'') l')
-
+and pseudo_expand_pat_list l context =
+  match l with
+    [] -> context []
+  | (a::l) -> 
+      pseudo_expand_pat a (fun a' ->
+	pseudo_expand_pat_list l (fun l' -> context (a'::l')))
+	
 and final_pseudo_expand t =
-  match pseudo_expand_term t with
-    None -> t
-  | Some(f,l) -> f l
+  pseudo_expand_term t (fun t -> t)
 
 (* Expand term to process *)
 
-let rec expand_term t = 
+let rec expand_term t context = 
   match t.t_desc with
     Var(b,l) ->
-      begin
-        match expand_term_list l with
-          None -> None
-        | Some(f,l') ->
-            Some(f, List.map (fun li -> Terms.build_term t (Var(b,li))) l')
-      end 
-  | ReplIndex _ -> None 
+      expand_term_list l (fun li ->
+	context (Terms.build_term t (Var(b,li))))
+  | ReplIndex _ -> context t
   | FunApp(f,l) ->
-      begin
-        match expand_term_list l with
-          None -> None
-        | Some(f',l') -> Some(f', List.map (fun li -> Terms.build_term t (FunApp(f,li))) l')
-      end
+      expand_term_list l (fun li ->
+	context (Terms.build_term t (FunApp(f,li))))
   | TestE(t1,t2,t3) ->
-      (* I always expand this test *)
-      let (f2, l2) = always_some t2 (expand_term t2) in
-      let (f3, l3) = always_some t3 (expand_term t3) in
-      let (f1, l1) = always_some t1 (expand_term t1) in
-      let len2 = List.length l2 in
-      Some((fun l -> 
-	let (l2part, l3part) = Terms.split len2 l in
-	f1 (List.map (fun t1i -> 
+      let t2' = expand_term t2 context in
+      let t3' = expand_term t3 context in
+      expand_term t1 (fun t1i ->
           (* Some trivial simplifications *)
-          if Terms.is_true t1i then f2 l2part else
-          if Terms.is_false t1i then f3 l3part else
-          Terms.oproc_from_desc (Test(t1i, f2 l2part, f3 l3part))) l1)), l2 @ l3)
+        if Terms.is_true t1i then t2' else
+        if Terms.is_false t1i then t3' else
+	Terms.oproc_from_desc (Test(t1i,  t2', t3')))
+
   | LetE(pat, t1, t2, topt) ->
-      let (fpat,lpat) = always_some pat (expand_pat pat) in
-      let (f1,l1) = always_some t1 (expand_term t1) in
-      let (f2,l2) = always_some t2 (expand_term t2) in
-      begin
-	match topt with
-	  None ->
-	    Some ((fun l -> 
-	      f1 (List.map (fun t1i -> 
-		fpat (List.map (fun pati ->
-		  Terms.oproc_from_desc (Let(pati, t1i, f2 l, Terms.oproc_from_desc Yield))) lpat)) l1)), l2)
-	| Some t3 ->
-	    let (f3,l3) = always_some t3 (expand_term t3) in
-	    let len2 = List.length l2 in
-	    Some ((fun l -> 
-	      let (l2part, l3part) = Terms.split len2 l in
-	      f1 (List.map (fun t1i -> 
-		fpat (List.map (fun pati ->
-		  Terms.oproc_from_desc (Let(pati, t1i, f2 l2part, f3 l3part))) lpat)) l1)), l2 @ l3)
-      end
+      let t2' = expand_term t2 context in
+      let p3 = match topt with
+	None -> Terms.oproc_from_desc Yield
+      | Some t3 -> expand_term t3 context
+      in
+      expand_term t1 (fun t1i ->
+	expand_pat pat (fun pati ->
+	  Terms.oproc_from_desc (Let(pati, t1i, t2', p3))))
   | FindE(l0, t3, find_info) ->
-      let rec expand_cond_find_list = function
-	  [] -> None
+      let rec expand_cond_find_list l context =
+	match l with
+	  [] -> context []
 	| ((bl, def_list, t1, t2)::restl) ->
 	    List.iter check_no_ifletfind_br def_list;
-	    let rest_lex = expand_cond_find_list restl in
-	    let ex1 = expand_term t1 in
-	    let ex1 = 
-	      match ex1 with
-		None -> None
-	      | Some(f,l) ->
-                  if bl != [] || def_list != [] then
-                    Some(extract_elem, [final_pseudo_expand t1])
-                  else
-                    ex1
-		  (*let fNil = f (List.map (fun _ -> Terms.oproc_from_desc Yield) l) in
-		  if List.exists (fun b -> Terms.refers_to_oprocess b fNil) bl || [fNil refers to variables in def_list] | [fNil contains new and bl != [] ] then
-		    Some (extract_elem, [final_pseudo_expand t1]) (* We cannot move the condition of the find outside, because it refers to variables defined in the find. In this case, we leave the term with if/let/find/res in it. *)
-                  else
-                    ex1*)
-            in
-	    match pairing_expand t1 restl ex1 rest_lex with
-	      None -> None
-	    | Some(f,l') -> Some(f, List.map (fun (a,l'') -> (bl, def_list, a, t2)::l'') l')
+                  (* I move something outside a condition of
+                     "find" only when bl and def_list are empty.  
+                     I could be more precise, I would need to
+                     check not only that what I move out does not
+                     refer to the indices of "find", but also that it
+                     is does not refer to the variables in the
+                     "defined" condition---otherwise, some variable
+                     accesses may not be defined after the
+                     transformation *)
+            if bl != [] || def_list != [] then
+	      expand_cond_find_list restl (fun li ->
+		context ((bl, def_list, final_pseudo_expand t1, t2)::li))
+	    else
+	      expand_term t1 (fun t1i ->
+		 expand_cond_find_list restl (fun li -> context ((bl, def_list, t1i, t2)::li)))
       in
 
-      let rec expand_res_find_list = function
-	  [] -> ((fun l -> []), [])
+      let rec expand_res_find_list l context =
+	match l with
+	  [] -> []
 	| ((bl, def_list, t1, t2)::restl) ->
-	    let (frestl, lrestl) = expand_res_find_list restl in
-	    let (f2, l2) = always_some t2 (expand_term t2) in
-	    let len2 = List.length l2 in
-	    ((fun l -> 
-	      let (l2part, l3part) = Terms.split len2 l in
-	      (bl, def_list, t1, f2 l2part) :: (frestl l3part)),
-	     l2 @ lrestl)
+	    (bl, def_list, t1, expand_term t2 context) ::
+	    (expand_res_find_list restl context)
       in 
-      let (f2, l2) = expand_res_find_list l0 in
-      let (f3, l3) = always_some t3 (expand_term t3) in
-      let len3 = List.length l3 in
-      Some((fun l -> 
-	let (l3part, l2part) = Terms.split len3 l in
-	let expanded_res_l = f2 l2part in
-	let expanded_res_t3 = f3 l3part in
-	let (f1, l1) = always_some expanded_res_l (expand_cond_find_list expanded_res_l) in
-        f1 (List.map (fun l1i -> Terms.oproc_from_desc (Find(l1i, expanded_res_t3, find_info))) l1)), l3 @ l2)
+      let expanded_res_l = expand_res_find_list l0 context in
+      let t3' = expand_term t3 context in
+      expand_cond_find_list expanded_res_l (fun l1i ->
+	Terms.oproc_from_desc (Find(l1i, t3', find_info)))
   | ResE(b, t) ->
-      let (f,l) = always_some t (expand_term t) in
-      Some((fun l -> Terms.oproc_from_desc (Restr(b, f l))), l)
+      Terms.oproc_from_desc (Restr(b, expand_term t context))
   | EventAbortE(f) ->
       (* The event is expanded to a process that stops just after the event.
 	 Events in terms are used only in the RHS of equivalences, and 
 	 one includes their probability of execution in the probability of
 	 breaking the protocol. *)
-      Some((fun l -> Terms.oproc_from_desc (EventAbort f)), [])
+      Terms.oproc_from_desc (EventAbort f)
 
-and expand_term_list = function
-  [] -> None
-| (a::l) -> 
-    let aex = expand_term a in
-    let lex = expand_term_list l in
-    match pairing_expand a l aex lex with
-      None -> None
-    | Some(f,l') -> Some(f, List.map (fun (a,l'') -> a::l'') l')
+and expand_term_list l context =
+  match l with
+    [] -> context []
+  | (a::l) -> 
+      expand_term a (fun a' ->
+	expand_term_list l (fun l' -> context (a'::l')))
 
-and expand_pat = function
-    PatVar b -> None
-  | PatTuple (ft,l) -> 
-      begin
-	match expand_pat_list l with
-	  None -> None
-	| Some(f,l') -> Some(f, List.map (fun li -> PatTuple (ft,li)) l')
-      end 
-  | PatEqual t -> 
-      begin
-	match expand_term t with
-	  None -> None
-	| Some(f,l) -> Some (f, List.map (fun ti -> PatEqual ti) l)
-      end
+and expand_pat pat context =
+  match pat with
+    PatVar b -> context (PatVar b)
+  | PatTuple (ft,l) ->
+      expand_pat_list l (fun li -> context (PatTuple (ft,li)))
+  | PatEqual t ->
+      expand_term t (fun ti -> context (PatEqual ti))
 
-and expand_pat_list = function
-  [] -> None
-| (a::l) -> 
-    let aex = expand_pat a in
-    let lex = expand_pat_list l in
-    match pairing_expand a l aex lex with
-      None -> None
-    | Some(f,l') -> Some(f, List.map (fun (a,l'') -> a::l'') l')
+and expand_pat_list l context =
+  match l with
+    [] -> context []
+  | (a::l) -> 
+      expand_pat a (fun a' ->
+	expand_pat_list l (fun l' -> context (a'::l')))
 
 
 (* Expand process to process *)
@@ -586,26 +460,27 @@ and expand_pat_list = function
 let rec expand_process cur_array p = 
   match p.i_desc with
     Nil -> Terms.iproc_from_desc Nil
-  | Par(p1,p2) -> Terms.iproc_from_desc  (Par(expand_process cur_array p1,
-		      expand_process cur_array p2))
-  | Repl(b,p) -> Terms.iproc_from_desc (Repl(b, expand_process (b::cur_array) p))
+  | Par(p1,p2) ->
+      Terms.iproc_from_desc  (Par(expand_process cur_array p1,
+				  expand_process cur_array p2))
+  | Repl(b,p) ->
+      Terms.iproc_from_desc (Repl(b, expand_process (b::cur_array) p))
   | Input((c,tl),pat,p) ->
       List.iter check_no_ifletfind tl;
-      begin
-	let patex = expand_pat pat in
-	match patex with
-	  None -> 
-            Terms.iproc_from_desc (Input((c,tl),pat, expand_oprocess cur_array p))
-	| Some(f,l) -> 
-	    Settings.changed := true;
-	    let b = Terms.create_binder "patv" (Terms.new_vname()) 
-		Settings.t_bitstring cur_array
-	    in
-	    Terms.iproc_from_desc (Input((c,tl),PatVar b, 
-	      f (List.map (fun pati -> Terms.oproc_from_desc 
+      if need_expand_pat pat then
+	begin
+	  Settings.changed := true;
+	  let b = Terms.create_binder "patv" (Terms.new_vname()) 
+	      Settings.t_bitstring cur_array
+	  in
+	  let p' = expand_oprocess cur_array p in
+	  Terms.iproc_from_desc (Input((c,tl),PatVar b, 
+	      expand_pat pat (fun pati -> Terms.oproc_from_desc 
                   (Let(pati, Terms.term_from_binder b,
-		       expand_oprocess cur_array p, Terms.oproc_from_desc Yield))) l)))
-      end
+		       p', Terms.oproc_from_desc Yield)))))
+	end
+      else
+        Terms.iproc_from_desc (Input((c,tl),pat, expand_oprocess cur_array p))
 
 and expand_oprocess cur_array p =
   match p.p_desc with 
@@ -613,79 +488,75 @@ and expand_oprocess cur_array p =
   | EventAbort f -> Terms.oproc_from_desc (EventAbort f)
   | Restr(b,p) -> Terms.oproc_from_desc (Restr(b, expand_oprocess cur_array p))
   | Test(t,p1,p2) ->
+      let p1' = expand_oprocess cur_array p1 in
+      let p2' = expand_oprocess cur_array p2 in
+      if need_expand t then
 	begin
-	  match expand_term t with
-	    None -> Terms.oproc_from_desc (Test(t,expand_oprocess cur_array p1,
-			 expand_oprocess cur_array p2))
-	  | Some(f,l) ->
-	      Settings.changed := true;
-	      f (List.map (fun ti ->
-                   (* Some trivial simplifications *)
-                   if Terms.is_true ti then expand_oprocess cur_array p1 else
-                   if Terms.is_false ti then expand_oprocess cur_array p2 else
-		   Terms.oproc_from_desc (Test(ti,expand_oprocess cur_array p1,
-		        expand_oprocess cur_array p2))) l)
+	  Settings.changed := true;
+	  expand_term t (fun ti ->
+            (* Some trivial simplifications *)
+            if Terms.is_true ti then p1' else
+            if Terms.is_false ti then p2' else
+	    Terms.oproc_from_desc (Test(ti,p1',p2')))
 	end
+      else
+	Terms.oproc_from_desc (Test(t,p1',p2'))
   | Find(l0, p2, find_info) ->
+      let l0' = List.map (fun (bl, def_list, t, p1) ->
+	(bl, def_list, t, expand_oprocess cur_array p1)) l0
+      in
       let rec expand_find_list next_f = function
 	  [] -> next_f []
 	| ((bl, def_list, t, p1)::rest_l) ->
 	    List.iter check_no_ifletfind_br def_list;
-	    let ex1 = expand_term t in
-	    let ex1 = 
-	      match ex1 with
-		None -> None
-	      | Some(f,l) ->
-                  if bl != [] || def_list != [] then
-                    Some(extract_elem, [final_pseudo_expand t])
-                  else
-                    ex1
-		  (*let fNil = f (List.map (fun _ -> Terms.oproc_from_desc Yield) l) in
-		  if List.exists (fun b -> Terms.refers_to_oprocess b fNil) bl || [fNil refers to variables in def_list] || [fNil contains new and bl != [] ] then
-		    Some(extract_elem, [final_pseudo_expand t]) (* We cannot move the condition of the find outside, because it refers to variables defined in the find. In this case, we leave the term with if/let/find/res in it. *)
-                  else
-                    ex1*)
-	    in
-	    match ex1 with
-	      None -> 
-		expand_find_list (fun rest_l' ->
-		  next_f ((bl, def_list, t, expand_oprocess cur_array p1)::rest_l')) rest_l
-	    | Some(f,l) ->
+	    if need_expand t then
+	      begin
 		Settings.changed := true;
-		f (List.map (fun ti -> expand_find_list (fun rest_l' ->
-		  next_f ((bl, def_list, ti, expand_oprocess cur_array p1)::rest_l')) rest_l) l)
+		if bl != [] || def_list != [] then
+		  expand_find_list (fun rest_l' ->
+		    next_f ((bl, def_list, final_pseudo_expand t, p1)::rest_l')) rest_l
+		else
+		  expand_term t (fun ti -> expand_find_list (fun rest_l' ->
+		    next_f ((bl, def_list, ti, p1)::rest_l')) rest_l)
+	      end
+	    else
+	      expand_find_list (fun rest_l' ->
+		next_f ((bl, def_list, t, p1)::rest_l')) rest_l
       in
-      expand_find_list (fun l0' -> Terms.oproc_from_desc (Find(l0', expand_oprocess cur_array p2, find_info))) l0
+      let p2' = expand_oprocess cur_array p2 in
+      expand_find_list (fun l0'' -> Terms.oproc_from_desc (Find(l0'', p2', find_info))) l0'
   | Output((c,tl),t2,p) ->
-      begin
-	let tlex = expand_term_list tl in
-	let t2ex = expand_term t2 in
-	match pairing_expand tl t2 tlex t2ex with
-	  None -> Terms.oproc_from_desc (Output((c,tl),t2, expand_process cur_array p))
-	| Some(f,l) -> 
-	    Settings.changed := true;
-	    f (List.map (fun (t1i,t2i) -> Terms.oproc_from_desc (Output((c,t1i),t2i,expand_process cur_array p))) l)
-      end
+      let p' = expand_process cur_array p in
+      if (List.exists need_expand tl) || (need_expand t2) then
+	begin
+	  Settings.changed := true;
+	  expand_term_list tl (fun tli ->
+	    expand_term t2 (fun t2i ->
+	      Terms.oproc_from_desc (Output((c,tli),t2i,p'))))
+	end
+      else
+	Terms.oproc_from_desc (Output((c,tl),t2,p'))
   | Let(pat,t,p1,p2) ->
-      begin
-	let tex = expand_term t in
-	let patex = expand_pat pat in
-	match pairing_expand t pat tex patex with
-	  None -> Terms.oproc_from_desc (Let(pat, t, expand_oprocess cur_array p1, 
-		      expand_oprocess cur_array p2))
-	| Some(f,l) -> 
-	    Settings.changed := true;
-	    f (List.map (fun (ti,pati) -> Terms.oproc_from_desc (Let(pati,ti,expand_oprocess cur_array p1, expand_oprocess cur_array p2))) l)
-      end
+      let p1' = expand_oprocess cur_array p1 in
+      let p2' = expand_oprocess cur_array p2 in
+      if (need_expand_pat pat) || (need_expand t) then
+	begin
+	  Settings.changed := true;
+	  expand_term t (fun ti ->
+	    expand_pat pat (fun pati ->
+	      Terms.oproc_from_desc (Let(pati,ti,p1',p2'))))
+	end
+      else
+	Terms.oproc_from_desc (Let(pat, t, p1', p2'))
   | EventP(t,p) ->
-      begin
-	let tex = expand_term t in
-	match tex with
-	  None -> Terms.oproc_from_desc (EventP(t, expand_oprocess cur_array p))
-	| Some(f,l) ->
-	    Settings.changed := true;
-	    f (List.map (fun ti -> Terms.oproc_from_desc (EventP(ti, expand_oprocess cur_array p))) l)
-      end
+      let p' = expand_oprocess cur_array p in
+      if need_expand t then
+	begin
+	  Settings.changed := true;
+	  expand_term t (fun ti -> Terms.oproc_from_desc (EventP(ti, p')))
+	end
+      else
+	Terms.oproc_from_desc (EventP(t, p'))
   | Get _|Insert _ -> Parsing_helper.internal_error "Get/Insert should not appear here"
 
 (* Main function for expansion of if and find
@@ -697,15 +568,16 @@ and expand_oprocess cur_array p =
 *)
 
 let expand_process g =
+  let (g', proba0, ins0) = Transf_auto_sa_rename.auto_sa_rename g in
   let tmp_changed = !Settings.changed in
-  let (p', proba, simplif_transfos) = simplify_process g in
+  let (p', proba, simplif_transfos) = simplify_process g' in
   let p'' = expand_process [] p' in
   if !Settings.changed then 
-    let (g', proba', ins) = Transf_auto_sa_rename.auto_sa_rename { proc = p''; game_number = -1; current_queries = g.current_queries } in
-    (g', proba' @ proba, ins @ (DExpandIfFind :: simplif_transfos))
+    let (g'', proba', ins) = Transf_auto_sa_rename.auto_sa_rename { proc = p''; game_number = -1; current_queries = g'.current_queries } in
+    (g'', proba' @ proba @ proba0, ins @ (DExpandIfFind :: simplif_transfos) @ ins0)
   else
     begin
       Settings.changed := tmp_changed;
-      Transf_auto_sa_rename.auto_sa_rename g
+      (g', proba0, ins0)
     end
-
+    

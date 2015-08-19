@@ -70,7 +70,9 @@ let rec inv1t cur_array t =
     Var(_,l) | FunApp(_,l) -> List.iter (inv1t cur_array) l
   | ReplIndex b -> 
       if not (List.memq b cur_array) then
-	Parsing_helper.internal_error "When I refer to a replication index, it should be an element of cur_array"
+	Parsing_helper.internal_error ("When I refer to a replication index (" ^
+				       (Display.repl_index_to_string b) ^
+				       "), it should be an element of cur_array")
   | ResE _ | FindE _ | TestE _ | LetE _ | EventAbortE _ ->
       Parsing_helper.internal_error "If/let/new/find should have been expanded"
 
@@ -121,7 +123,7 @@ let rec inv1fc cur_array t =
 	accu := Terms.unionq (vars @ deft @ defp) (!accu)
 	) l0;
       !accu
-
+      
 
 let rec inv1 cur_array p = 
   match p.i_desc with
@@ -304,7 +306,7 @@ let rec invpat defined_refs = function
   | PatEqual t ->
       invt defined_refs t;
       t.t_type
-
+      
 let rec invfc defined_refs t =
   match t.t_desc with
     Var _ | FunApp _ | ReplIndex _ -> invt defined_refs t

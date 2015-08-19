@@ -1,6 +1,50 @@
 This file summarizes the most important changes between versions
 of the cryptographic protocol verifier.
 
+Version 1.20
+
+- added modeling of the Gap Diffie-Hellman assumption
+- improved proof of secrecy, in particular for forward secrecy
+- improved merging of branches of if/find/let, to allow variables
+  with array accesses to be renamed between the branches (with
+  additional conditions so that this is sound).
+  Useful in particular for proving indistinguishability of
+  P1 and P2 by showing secrecy of b in the process
+  "if b then P1 else P2".
+  The merging of branches is no longer done within simplify;
+  it is done as a separate transformation after simplify.
+- improved collection of facts that hold at each program point,
+  by taking into account that certain definition points of variables
+  are not compatible.
+- improved the proof of correspondence assertions by distinguishing
+  cases depending on the definition points of variables. Removed the display
+  of advice since it is replaced by these case distinctions.
+- extended the command 'insert' to allow references to variables
+  known to be defined but not explicitly included in the 'defined'
+  conditions of 'find's above the inserted instruction. The 'defined'
+  conditions of these 'find's are updated accordingly.
+- improved case distinctions on the order in which variables
+  are defined: now both cases can be proved using "elsefind" facts,
+  in addition to proving one case via "elsefind" facts and the other
+  one by elimination of collisions.
+- improved elimination of collisions between terms t1 = t2
+  when t1 characterizes a large random value b[l] and
+  t2 contains b[l'] with l <> l'.
+- improved dependency analysis in conditions of find
+- improved the simplification of terms. More precisely,
+  improved usage of known equalities to test equality of
+  two given terms
+- use known equalities to determine the values of variables
+  in the cryptographic transformation (can be disabled with
+  "set useKnownEqualitiesInCryptoTransform = false.")
+- check that the defined variables are compatible also after
+  each "if". This is useful in case the condition of the "if" 
+  allows to simplify array indices of variables.
+- fixed two bugs in global dependency analysis
+- fixed bug that could lead to an internal error in the cryptographic 
+  transformation (some terms were incorrectly forbidden in the computation 
+  of the length of a term)
+
 Version 1.19
 
 - improved simplification by orienting equations f(...) = f'(...)

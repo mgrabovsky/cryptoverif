@@ -293,7 +293,7 @@ let p_add(x,y) =
   match x,y with
     Zero, a | a, Zero | Cst 0.0, a | a, Cst 0.0 -> a
   | _ -> Add(x,y)
-
+  
 let rec p_sum = function
   [] -> Zero
 | [a] -> a
@@ -354,7 +354,7 @@ let rec split_monomial = function
       |	_ ->
 	  let l = factor_to_list f in
 	  { r' with large_factors = l @ r'.large_factors }
-
+	  
 let split_coef_monomial (coef, a) =
   let r = split_monomial a in
   { r with small_factors = p_mul(Cst coef, r.small_factors) }

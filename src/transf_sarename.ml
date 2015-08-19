@@ -63,7 +63,7 @@ have no array references and do not occur in queries.
 
 (* - First pass: look for assignments to x, give a new name to each of them,
    and rename the in-scope references to x with current session identifiers *)
-
+   
 let image_name_list = ref []
 
 (* NOTE: when TestE/LetE/FindE/ResE are forbidden, sa_term is the identity *)
@@ -223,7 +223,7 @@ and sa_oprocess b0 p =
 (* - Second pass: empty b.def 
 	          compute new value of b.def
      See terms.ml *)
-
+      
 (* - Third pass: rename the out-scope array references to x
    A find ... suchthat defined(M1...Mn) should be split if 
    x[...] is a subterm of M1...Mn 
@@ -275,7 +275,7 @@ and implies_def_term b0 accu t =
   | ReplIndex _ -> ()
   | FunApp(f,l) -> List.iter (implies_def_term b0 accu) l
   | _ -> Parsing_helper.internal_error "if/let/find forbidden in defined conditions of find"
-
+    
 let implies_def b0 def_list =
   let accu = ref [] in
   List.iter (implies_def_subterm b0 accu) def_list;

@@ -88,13 +88,13 @@ let processT =
 	event bad.
 
 process 
-	in(start, ());
+	(in(start, ());
 	new hk: hashkey;
 	new r:seed; 
 	let pk = pkgen(r) in
 	let sk = skgen(r) in
 	out(c0, pk);
-	(processS | processT | hashoracle)
+	(processS | processT | hashoracle))
 
 
 (* EXPECTED
