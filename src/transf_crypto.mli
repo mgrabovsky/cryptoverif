@@ -4,7 +4,7 @@
  *                                                           *
  *       Bruno Blanchet and David Cadé                       *
  *                                                           *
- *       Copyright (C) ENS, CNRS, INRIA, 2005-2014           *
+ *       Copyright (C) ENS, CNRS, INRIA, 2005-2015           *
  *                                                           *
  *************************************************************)
 
@@ -45,6 +45,8 @@ knowledge of the CeCILL-B license and that you accept its terms.
 
 *)
 open Types
+
+val display_failure_reason : failure_reason -> unit
 
 (* [crypto_transform stop no_advice e bl g] applies an equivalence e coming 
    from the definition of a cryptographic primitive to game g 

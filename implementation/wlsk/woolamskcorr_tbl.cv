@@ -4,7 +4,7 @@
  *                                                           *
  *       Bruno Blanchet and David Cadé                       *
  *                                                           *
- *       Copyright (C) ENS, CNRS, INRIA, 2005-2014           *
+ *       Copyright (C) ENS, CNRS, INRIA, 2005-2015           *
  *                                                           *
  *************************************************************)
 
@@ -214,3 +214,8 @@ process
 	((! Nh processH) |
 	 (! N processS) |
 	 (! N2 processK))
+
+(* EXPECTED
+All queries proved.
+0.056s (user 0.052s + system 0.004s), max rss 40848K
+END *)

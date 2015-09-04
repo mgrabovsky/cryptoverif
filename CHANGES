@@ -1,6 +1,24 @@
 This file summarizes the most important changes between versions
 of the cryptographic protocol verifier.
 
+Version 1.21
+
+- Display an explanation when a cryptographic transformation
+  fails (when it needs no random variable or at least one
+  random variable was provided)
+- Reimplemented the test of compatibility between definitions
+  of variables and between program points, to make it cleaner,
+  more precise, and faster
+- In expand, remove the find completely when all branches are removed
+- Improved display of long mathematical formulas in latex
+- Improved model of the Gap Diffie-Hellman assumption
+- Fixed bug that could cause an internal error in merging of branches,
+  when CryptoVerif did not manage to build a MergeArrays advised instruction.
+  It now gives no advice in this case.
+- Fixed missing update of defined conditions of find in
+  global dependency analysis
+- Fixed display bug for find with no branch at all
+
 Version 1.20
 
 - added modeling of the Gap Diffie-Hellman assumption

@@ -26,17 +26,17 @@ higher. Objective Caml can be downloaded from
 
 Uncompress the archive using tar:
 
-	gunzip cryptoverif1.20.tar.gz
-	tar -xf cryptoverif1.20.tar
+	gunzip cryptoverif1.21.tar.gz
+	tar -xf cryptoverif1.21.tar
 
 or if you have GNU tar:
 
-	tar -xzf cryptoverif1.20.tar.gz
+	tar -xzf cryptoverif1.21.tar.gz
 
-This will create a directory named cryptoverif1.20 in the current directory.
+This will create a directory named cryptoverif1.21 in the current directory.
 Go into this directory, and build the programs:
 
-	cd cryptoverif1.20
+	cd cryptoverif1.21
 	./build
 
 * under Windows NT, 2000, or XP (without cygwin)
@@ -70,7 +70,7 @@ of cryptographic protocols. To run CryptoVerif on example X, execute
 e.g.	./cryptoverif examples/otway-rees3Stream
 
 Note: CryptoVerif must be run in the directory that contains the files
-"default.cvl" and "default.ocvl" (which is the cryptoverif1.20
+"default.cvl" and "default.ocvl" (which is the cryptoverif1.21
 directory). CryptoVerif accesses these files which contain definitions
 of cryptographic primitives.
 

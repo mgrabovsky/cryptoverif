@@ -103,7 +103,7 @@ echo
 echo CHANNELS FRONTEND
 echo
 
-for i in examplesnd/test/* examplesnd/kerberos/* examplesnd/arinc823/*.cv
+for i in examplesnd/test/* examplesnd/kerberos/* examplesnd/arinc823/*.cv implementation/wlsk/woolamskcorr_tbl.cv
 do
     if [ -f $i ]
     then
@@ -115,7 +115,7 @@ echo
 echo ORACLES FRONTEND
 echo
 
-for i in examplesnd/otest/*
+for i in examplesnd/otest/* implementation/nspk/nspk3tbl.ocv implementation/ssh/ssh.ocv implementation/ssh/ssh-secrecy-key-*.ocv
 do
     if [ -f $i ]
     then

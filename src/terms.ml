@@ -4,7 +4,7 @@
  *                                                           *
  *       Bruno Blanchet and David Cadé                       *
  *                                                           *
- *       Copyright (C) ENS, CNRS, INRIA, 2005-2014           *
+ *       Copyright (C) ENS, CNRS, INRIA, 2005-2015           *
  *                                                           *
  *************************************************************)
 
@@ -47,7 +47,7 @@ knowledge of the CeCILL-B license and that you accept its terms.
 open Types
 open Parsing_helper
 
-let compatible_empty = Binderset.empty
+let map_empty = Occ_map.empty
 
 let simp_facts_id = ([],[],[])
 let try_no_var_id t = t
@@ -240,7 +240,9 @@ let build_term t desc =
   { t_desc = desc;
     t_type = t.t_type;
     t_occ = new_occ(); 
+    t_max_occ = 0;
     t_loc = Parsing_helper.dummy_ext;
+    t_incompatible = map_empty;
     t_facts = None }
 
 (* build_term2 is the same as build_term, except that it keeps the
@@ -252,16 +254,38 @@ let build_term2 t desc =
   { t_desc = desc;
     t_type = t.t_type;
     t_occ = t.t_occ;
+    t_max_occ = 0;
     t_loc = t.t_loc;
+    t_incompatible = map_empty;
+    t_facts = None }
+
+let build_term3 t desc =
+  { t_desc = desc;
+    t_type = t.t_type;
+    t_occ = new_occ();
+    t_max_occ = 0;
+    t_loc = t.t_loc;
+    t_incompatible = map_empty;
     t_facts = None }
 
 let build_term_type ty desc =
   { t_desc = desc;
     t_type = ty;
     t_occ = new_occ();
+    t_max_occ = 0;
     t_loc = Parsing_helper.dummy_ext;
+    t_incompatible = map_empty;
     t_facts = None }
 
+let new_term ty ext desc =
+  { t_desc = desc;
+    t_type = ty;
+    t_occ = new_occ();
+    t_max_occ = 0;
+    t_loc = ext;
+    t_incompatible = map_empty;
+    t_facts = None }  
+    
 let term_from_repl_index b =
   build_term_type b.ri_type (ReplIndex b)
 
@@ -285,17 +309,25 @@ let app f l =
 
 (* Process from desc *)
 
-let iproc_from_desc d = { i_desc = d; i_occ = new_occ(); i_facts = None }
+let iproc_from_desc d = { i_desc = d; i_occ = new_occ(); i_max_occ = 0; 
+			  i_incompatible = map_empty; i_facts = None }
 
-let oproc_from_desc d = { p_desc = d; p_occ = new_occ(); p_facts = None }
+let oproc_from_desc d = { p_desc = d; p_occ = new_occ(); p_max_occ = 0;
+			  p_incompatible = map_empty; p_facts = None }
 
-let iproc_from_desc2 p d = { i_desc = d; i_occ = p.i_occ; i_facts = p.i_facts }
+let iproc_from_desc2 p d = { i_desc = d; i_occ = p.i_occ; i_max_occ = 0; 
+			     i_incompatible = p.i_incompatible; 
+			     i_facts = p.i_facts }
 
-let oproc_from_desc2 p d = { p_desc = d; p_occ = p.p_occ; p_facts = p.p_facts }
+let oproc_from_desc2 p d = { p_desc = d; p_occ = p.p_occ; p_max_occ = 0;
+			     p_incompatible = p.p_incompatible; 
+			     p_facts = p.p_facts }
 
-let iproc_from_desc3 p d = { i_desc = d; i_occ = p.i_occ; i_facts = None }
+let iproc_from_desc3 p d = { i_desc = d; i_occ = p.i_occ; i_max_occ = 0; 
+			     i_incompatible = map_empty; i_facts = None }
 
-let oproc_from_desc3 p d = { p_desc = d; p_occ = p.p_occ; p_facts = None }
+let oproc_from_desc3 p d = { p_desc = d; p_occ = p.p_occ; p_max_occ = 0;
+			     p_incompatible = map_empty; p_facts = None }
 
 (* Constant for each type *)
 
@@ -1126,7 +1158,6 @@ let new_binder b0 =
     btype = b0.btype;
     args_at_creation = b0.args_at_creation;
     def = b0.def;
-    compatible = compatible_empty;
     link = NoLink;
     count_def = 0;
     root_def_array_ref = false;
@@ -1149,7 +1180,6 @@ let create_binder s n t a =
     btype = t;
     args_at_creation = a;
     def = [];
-    compatible = compatible_empty;
     link = NoLink;
     count_def = 0;
     root_def_array_ref = false;
@@ -1181,8 +1211,9 @@ let create_gvar b =
 		      true_facts_at_def = []; 
 		      def_vars_at_def = []; 
 		      elsefind_facts_at_def = [];
-		      future_binders = []; future_true_facts = []; n_compatible = compatible_empty;
-		      definition = DGenVar } 
+		      future_binders = []; future_true_facts = []; 
+		      definition = DGenVar;
+		      definition_success = DGenVar} 
   in
   b'.def <- [st_node];
   b'
@@ -1243,6 +1274,7 @@ let rec get_deflist_subterms accu t =
     Var(b,l) -> add_binderref (b,l) accu
   | ReplIndex i -> ()
   | FunApp(f,l) -> List.iter (get_deflist_subterms accu) l
+	(* The cases TestE, FindE, LetE, RestE, EventAbortE are probably not used *)
   | TestE(t1,t2,t3) -> 
       get_deflist_subterms accu t1;
       get_deflist_subterms accu t2;
@@ -1270,60 +1302,13 @@ and get_def_list_pat accu = function
   | PatTuple(f,l) -> List.iter (get_def_list_pat accu) l
   | PatEqual t -> get_deflist_subterms accu t
 
-let rec get_deflist_process accu p = 
-  match p.i_desc with
-    Nil -> ()
-  | Par(p1,p2) -> get_deflist_process accu p1;
-      get_deflist_process accu p2
-  | Repl(b,p) -> get_deflist_process accu p
-  | Input((c,tl),pat,p) ->
-      List.iter (get_deflist_subterms accu) tl;
-      get_def_list_pat accu pat;
-      get_deflist_oprocess accu p
-
-and get_deflist_oprocess accu p =
-  match p.p_desc with
-    Yield | EventAbort _ -> ()
-  | Restr(b,p) -> get_deflist_oprocess accu p
-  | Test(t,p1,p2) -> 
-      get_deflist_subterms accu t;
-      get_deflist_oprocess accu p1;
-      get_deflist_oprocess accu p2
-  | Find(l0,p2, find_info) ->
-      List.iter (fun (bl, def_list, t, p1) ->
-	get_deflist_subterms accu t;
-	get_deflist_oprocess accu p1
-	) l0;
-      get_deflist_oprocess accu p2
-  | Let(pat,t,p1,p2) ->
-      get_def_list_pat accu pat;
-      get_deflist_subterms accu t;
-      get_deflist_oprocess accu p1;
-      get_deflist_oprocess accu p2
-  | Output((c,tl),t2,p) ->
-       List.iter (get_deflist_subterms accu) tl;
-      get_deflist_subterms accu t2;
-      get_deflist_process accu p
-  | EventP(t,p) ->
-      get_deflist_subterms accu t;
-      get_deflist_oprocess accu p
-  | Get(tbl,patl,topt,p1,p2) ->
-      List.iter (get_def_list_pat accu) patl;
-      (match topt with None -> () | Some t -> get_deflist_subterms accu t);
-      get_deflist_oprocess accu p1;
-      get_deflist_oprocess accu p2
-  | Insert(tbl,tl,p) ->
-      List.iter (get_deflist_subterms accu) tl;
-      get_deflist_oprocess accu p
-      
-
 (* Change the occurrences and make sure nodes associated with Find
    are distinct for different occurrences of Find *)
 
 let rec move_occ_term t = 
-  let occ = new_occ() in
-  { t_desc = 
-      (match t.t_desc with
+  let x_occ = new_occ() in
+  let desc = 
+    match t.t_desc with
 	Var(b,l) -> Var(b, List.map move_occ_term l)
       |	ReplIndex i -> ReplIndex i
       |	FunApp(f,l) -> FunApp(f, List.map move_occ_term l)
@@ -1353,10 +1338,13 @@ let rec move_occ_term t =
       |	ResE(b,t) ->
 	  ResE(b, move_occ_term t)
       |	EventAbortE f -> EventAbortE f 
-	    );
+  in
+  { t_desc = desc;
     t_type = t.t_type;
-    t_occ = occ; 
+    t_occ = x_occ;
+    t_max_occ = !occ;
     t_loc = Parsing_helper.dummy_ext;
+    t_incompatible = map_empty;
     t_facts = None }
 
 and move_occ_pat = function
@@ -1367,9 +1355,9 @@ and move_occ_pat = function
 and move_occ_br (b,l) = (b, List.map move_occ_term l)
 
 let rec move_occ_process p = 
-  let occ = new_occ() in
-  { i_desc = 
-      (match p.i_desc with
+  let x_occ = new_occ() in
+  let desc = 
+    match p.i_desc with
 	Nil -> Nil
       | Par(p1,p2) -> 
 	  let p1' = move_occ_process p1 in
@@ -1380,14 +1368,18 @@ let rec move_occ_process p =
 	  let tl' = List.map move_occ_term tl in
 	  let pat' = move_occ_pat pat in
 	  let p' = move_occ_oprocess p in
-	  Input((c, tl'), pat', p'));
-    i_occ = occ; 
+	  Input((c, tl'), pat', p')
+  in
+  { i_desc = desc;
+    i_occ = x_occ; 
+    i_max_occ = !occ;
+    i_incompatible = map_empty; 
     i_facts = None }
 
 and move_occ_oprocess p =
-  let occ = new_occ() in
-  { p_desc = 
-      (match p.p_desc with
+  let x_occ = new_occ() in
+  let desc = 
+    match p.p_desc with
 	Yield -> Yield
       |	EventAbort f -> EventAbort f
       | Restr(b,p) -> Restr(b, move_occ_oprocess p)
@@ -1433,8 +1425,12 @@ and move_occ_oprocess p =
       | Insert (tbl,tl,p) -> 
 	  let tl' = List.map move_occ_term tl in
 	  let p' = move_occ_oprocess p in
-          Insert(tbl, tl', p'));
-    p_occ = occ;
+          Insert(tbl, tl', p')
+  in
+  { p_desc = desc;
+    p_occ = x_occ;
+    p_max_occ = !occ;
+    p_incompatible = map_empty; 
     p_facts = None }
 
 let move_occ_process p =
@@ -1897,22 +1893,14 @@ let make_false () =
 let make_and_ext ext t t' =
   if (is_true t) || (is_false t') then t' else
   if (is_true t') || (is_false t) then t else
-  { t_desc = FunApp(Settings.f_and, [t;t']);
-    t_type = Settings.t_bool;
-    t_occ = new_occ();
-    t_loc = ext;
-    t_facts = None }
+  new_term Settings.t_bool ext (FunApp(Settings.f_and, [t;t']))
 
 let make_and t t' =  make_and_ext Parsing_helper.dummy_ext t t'
 
 let make_or_ext ext t t' =
   if (is_false t) || (is_true t') then t' else
   if (is_false t') || (is_true t) then t else
-  { t_desc = FunApp(Settings.f_or, [t;t']);
-    t_type = Settings.t_bool;
-    t_occ = new_occ();
-    t_loc = ext;
-    t_facts = None }
+  new_term Settings.t_bool ext (FunApp(Settings.f_or, [t;t']))
 
 let make_or t t' =  make_or_ext Parsing_helper.dummy_ext t t'
 
@@ -1930,11 +1918,8 @@ let make_not t =
   build_term_type Settings.t_bool (FunApp(Settings.f_not, [t]))
   
 let make_equal_ext ext t t' =
-  { t_desc = FunApp(Settings.f_comp Equal t.t_type t'.t_type, [t;t']);
-    t_type = Settings.t_bool;
-    t_occ = new_occ();
-    t_loc = ext;
-    t_facts = None }
+  new_term Settings.t_bool ext
+    (FunApp(Settings.f_comp Equal t.t_type t'.t_type, [t;t']))
 
 let make_equal t t' = make_equal_ext Parsing_helper.dummy_ext t t'
 
@@ -1942,11 +1927,8 @@ let make_let_equal t t' =
   build_term_type Settings.t_bool (FunApp(Settings.f_comp LetEqual t.t_type t'.t_type, [t;t']))
 
 let make_diff_ext ext t t' =
-  { t_desc = FunApp(Settings.f_comp Diff t.t_type t'.t_type, [t;t']);
-    t_type = Settings.t_bool;
-    t_occ = new_occ();
-    t_loc = ext;
-    t_facts = None }
+  new_term Settings.t_bool ext
+    (FunApp(Settings.f_comp Diff t.t_type t'.t_type, [t;t']))
 
 let make_diff t t' = make_diff_ext Parsing_helper.dummy_ext t t'
 
@@ -2228,7 +2210,7 @@ let rec def_vars_term accu t =
   | FindE(l0, t3, _) ->
       let accu = ref (def_vars_term accu t3) in
       List.iter (fun (bl, def_list, t1, t2) ->
-	(*Nothing to for def_list: it contains only
+	(*Nothing to do for def_list: it contains only
           Var and Fun*)
 	accu := unionq (List.map fst bl) (def_vars_term (def_vars_term (!accu) t1) t2)
 	     ) l0;
@@ -2294,8 +2276,9 @@ let rec def_term event_accu above_node true_facts def_vars t =
 			    true_facts_at_def = true_facts'; 
 			    def_vars_at_def = def_vars';
 			    elsefind_facts_at_def = [];
-			    future_binders = []; future_true_facts = []; n_compatible = compatible_empty;
-			    definition = DTerm t } 
+			    future_binders = []; future_true_facts = []; 
+			    definition = DTerm t;
+			    definition_success = DTerm t2 } 
 	in
 	List.iter (fun b -> b.def <- above_node' :: b.def) vars;
 	ignore(def_term event_accu (def_term_def_list event_accu above_node true_facts def_vars def_list) true_facts def_vars_t1 t1);
@@ -2311,8 +2294,9 @@ let rec def_term event_accu above_node true_facts def_vars t =
 			    true_facts_at_def = true_facts'; 
 			    def_vars_at_def = def_vars;
 			    elsefind_facts_at_def = [];
-			    future_binders = []; future_true_facts = []; n_compatible = compatible_empty;
-			    definition = DTerm t } 
+			    future_binders = []; future_true_facts = []; 
+			    definition = DTerm t;
+			    definition_success = DTerm t2 } 
       in
       List.iter (fun b -> b.def <- above_node''' :: b.def) (!accu);
       ignore (def_term event_accu above_node''' true_facts' def_vars t2);
@@ -2333,8 +2317,9 @@ let rec def_term event_accu above_node true_facts def_vars t =
 			  true_facts_at_def = true_facts; 
 			  def_vars_at_def = def_vars;
 			  elsefind_facts_at_def = [];
-			  future_binders = []; future_true_facts = []; n_compatible = compatible_empty;
-			  definition = DTerm t } 
+			  future_binders = []; future_true_facts = []; 
+			  definition = DTerm t;
+			  definition_success = DTerm t' } 
       in
       b.def <- above_node' :: b.def;
       def_term event_accu above_node' true_facts def_vars t'
@@ -2389,8 +2374,9 @@ let rec def_process event_accu above_node true_facts def_vars p' =
                           true_facts_at_def = true_facts;
                           def_vars_at_def = def_vars;
                           elsefind_facts_at_def = [];
-                          future_binders = []; future_true_facts = []; n_compatible = compatible_empty;
-                          definition = DInputProcess p' }
+                          future_binders = []; future_true_facts = []; 
+                          definition = DInputProcess p';
+			  definition_success = DInputProcess p }
       in
       def_process event_accu above_node' true_facts def_vars p
   | Input((c,tl),pat,p) ->
@@ -2404,8 +2390,9 @@ let rec def_process event_accu above_node true_facts def_vars p' =
 			    true_facts_at_def = true_facts; 
 			    def_vars_at_def = def_vars;
 			    elsefind_facts_at_def = [];
-			    future_binders = []; future_true_facts = []; n_compatible = compatible_empty;
-			    definition = DInputProcess p' } 
+			    future_binders = []; future_true_facts = []; 
+			    definition = DInputProcess p';
+			    definition_success = DProcess p } 
       in
       List.iter (fun b -> b.def <- above_node''' :: b.def) (!accu);
       let (fut_binders, fut_true_facts) = 
@@ -2437,8 +2424,9 @@ and def_oprocess event_accu above_node true_facts def_vars elsefind_facts p' =
 			  true_facts_at_def = true_facts; 
 			  def_vars_at_def = def_vars;
 			  elsefind_facts_at_def = elsefind_facts;
-			  future_binders = []; future_true_facts = []; n_compatible = compatible_empty;
-			  definition = DProcess p' } 
+			  future_binders = []; future_true_facts = []; 
+			  definition = DProcess p';
+			  definition_success = DProcess p } 
       in
       b.def <- above_node' :: b.def;
       let (fut_binders, fut_true_facts) = 
@@ -2492,8 +2480,9 @@ and def_oprocess event_accu above_node true_facts def_vars elsefind_facts p' =
 				true_facts_at_def = true_facts'; 
 				def_vars_at_def = def_vars';
 				elsefind_facts_at_def = elsefind_facts;
-				future_binders = []; future_true_facts = []; n_compatible = compatible_empty;
-				definition = DProcess p' } 
+				future_binders = []; future_true_facts = []; 
+				definition = DProcess p';
+			        definition_success = DProcess p1 } 
 	    in
 	    List.iter (fun b -> b.def <- above_node' :: b.def) vars;
 	    ignore(def_term event_accu (def_term_def_list event_accu above_node true_facts def_vars def_list) true_facts def_vars_t t);
@@ -2524,8 +2513,9 @@ and def_oprocess event_accu above_node true_facts def_vars elsefind_facts p' =
 			    true_facts_at_def = true_facts'; 
 			    def_vars_at_def = def_vars;
 			    elsefind_facts_at_def = elsefind_facts'';
-			    future_binders = []; future_true_facts = []; n_compatible = compatible_empty;
-			    definition = DProcess p' } 
+			    future_binders = []; future_true_facts = []; 
+			    definition = DProcess p';
+			    definition_success = DProcess p1 } 
       in
       List.iter (fun b -> b.def <- above_node''' :: b.def) (!accu);
       let (fut_binders1, fut_true_facts1) = 
@@ -2597,8 +2587,9 @@ let build_def_process event_accu p =
 		      true_facts_at_def = []; 
 		      def_vars_at_def = []; 
 		      elsefind_facts_at_def = [];
-		      future_binders = []; future_true_facts = []; n_compatible = compatible_empty;
-		      definition = DNone } 
+		      future_binders = []; future_true_facts = []; 
+		      definition = DNone;
+		      definition_success = DNone } 
   in
   def_process event_accu st_node [] [] p
 
@@ -2865,20 +2856,23 @@ let cleanup_exclude_array_ref() =
 let has_array_ref_non_exclude b =
   b.count_array_ref > b.count_exclude_array_ref
 
-(* Build list of compatible binder definitions
-   i.e. pairs of binders that can be simultaneously defined with
-   the same array indexes 
-   Supports LetE/FindE/ResE/TestE everywhere
-*)
+(* Build the "incompatible" field for each program point [pp]. It
+   contains the mapping of occurrences of program points [pp']
+   incompatible with [pp] to the length [l] such that if [pp] with
+   indices [arg] and [pp'] with indices [args'] are both executed,
+   then the suffixes of length [l] of [args] and [args'] must be
+   different.
+   Supports LetE/FindE/ResE/TestE everywhere *)
 
-(* Empty the "compatible" field of all variables. *)
+(* Empty the "incompatible" field of all program points. *)
 
 let rec empty_comp_pattern = function
-    PatVar b -> b.compatible <- compatible_empty
+    PatVar b -> ()
   | PatTuple (f,l) -> List.iter empty_comp_pattern l
   | PatEqual t -> empty_comp_term t
 
 and empty_comp_term t =
+  t.t_incompatible <- map_empty;
   match t.t_desc with
     Var (_,l) | FunApp(_,l)-> List.iter empty_comp_term l
   | ReplIndex _ -> ()
@@ -2888,7 +2882,7 @@ and empty_comp_term t =
       empty_comp_term t3
   | FindE(l0,t3,_) ->
       List.iter (fun (bl,def_list,t1,t2) ->
-	List.iter (fun (b,_) -> b.compatible <- compatible_empty) bl;
+	List.iter (fun (_,l) -> List.iter empty_comp_term l) def_list;
 	empty_comp_term t1;
 	empty_comp_term t2) l0;
       empty_comp_term t3
@@ -2902,11 +2896,11 @@ and empty_comp_term t =
 	| Some t3 -> empty_comp_term t3
       end
   | ResE(b,p) ->
-      b.compatible <- compatible_empty;
       empty_comp_term p
   | EventAbortE _ -> ()
 
 let rec empty_comp_process p = 
+  p.i_incompatible <- map_empty;
   match p.i_desc with
     Nil -> ()
   | Par(p1,p2) -> 
@@ -2920,10 +2914,10 @@ let rec empty_comp_process p =
       empty_comp_oprocess p
 
 and empty_comp_oprocess p =
+  p.p_incompatible <- map_empty;
   match p.p_desc with
     Yield | EventAbort _ -> ()
   | Restr(b,p) ->
-      b.compatible <- compatible_empty;
       empty_comp_oprocess p
   | Test(t,p1,p2) ->
       empty_comp_term t;
@@ -2931,7 +2925,7 @@ and empty_comp_oprocess p =
       empty_comp_oprocess p2
   | Find(l0,p2,_) ->
       List.iter (fun (bl,def_list,t,p1) ->
-	List.iter (fun (b,_) -> b.compatible <- compatible_empty) bl;
+	List.iter (fun (_,l) -> List.iter empty_comp_term l) def_list;
 	empty_comp_term t;
 	empty_comp_oprocess p1) l0;
       empty_comp_oprocess p2
@@ -2960,288 +2954,278 @@ and empty_comp_oprocess p =
       List.iter empty_comp_term tl;
       empty_comp_oprocess p
 
-(* [add_compatible l1 l2] is called when the variables in [l1]
-   may be defined before the variables in [l2], in the same session.
+(* Compute the "incompatible" field for all program points *)
 
-   [a \in b.compatible] when [a] may be defined before [b] 
-   (with the same indices up to the minimal length of indices of [a] and [b]) *)
-
-let add_compatible1 a l =
-  List.iter (fun b ->
-    if a == b then
-      Parsing_helper.internal_error "Same binder may be defined several times";
-    b.compatible <- Binderset.add b.compatible a) l
-
-let add_compatible l1 l2 =
-  List.iter (fun a ->add_compatible1 a l2) l1
-
-(* [add_compatible_node nl bl] registers that the variables in [bl]
-   may be defined at the nodes in [nl] *)
-
-let add_compatible_node1 n bl =
-  List.iter (fun b ->
-    n.n_compatible <- Binderset.add n.n_compatible b) bl
-	
-let add_compatible_node nl bl =
-  List.iter (fun n -> add_compatible_node1 n bl) nl
-
-(* [add_compatible_var_node vnl1 vnl2] is called when the variables in [vnl1]
-   may be defined before the variables in [vnl2], in the same session.
-
-   [vnl1] and [vnl2] are pairs of a list of variables and a list of nodes
-   (representing definition points for these variables). *)
-
-let add_compatible_var_node (bl1, nl1) (bl2, nl2) =
-  add_compatible bl1 bl2;
-  add_compatible_node nl1 bl2;
-  add_compatible_node nl2 bl1
-
-(* [add_compatible_bi vnl1 vnl2] is called when the variables in [vnl1]
-   may be defined before or after the variables in [vnl2]. *)
-
-let add_compatible_bi (bl1, nl1) (bl2, nl2) =
-  add_compatible bl1 bl2;
-  add_compatible bl2 bl1;
-  add_compatible_node nl1 bl2;
-  add_compatible_node nl2 bl1
-
-(* [union_var_node vnl1 vnl1] returns the union of [vnl1] and [vnl2] *)
-
-let union_var_node (bl1, nl1) (bl2, nl2) =
-  (unionq bl1 bl2, unionq nl1 nl2)
-
-(* [add_compatible_seq l] is called with [l = [vnl1; ...; vnln]]
-   when the variables in [vnl1] are defined before the variables in [vnl2],...
-   which are defined before the variables in [vnln].
-   It returns the union of [vnl1; ...; vnln]. *)
-
-let rec add_compatible_seq = function
-    [] -> [],[]
-  | l1::lrest ->
-      let unionrest = add_compatible_seq lrest in
-      add_compatible_var_node l1 unionrest;
-      union_var_node l1 unionrest
-      
-(* [add_self_compatible vnl] is called when the variables in [vnl]
-   are defined simultaneously *)
-
-let add_self_compatible (bl, nl) =
-  let rec add_self_compatible_rec seen = function
-    [] -> ()
-  | (a::l) -> 
-      add_compatible1 a l; 
-      add_compatible1 a seen; 
-      add_self_compatible_rec (a::seen) l
-  in
-  add_self_compatible_rec [] bl;
-  add_compatible_node nl bl
-
-(* [get_node fact_info] returns the node corresponding to a program point
-   determined by [fact_info] *)
-
-let get_node fact_info =
-  match fact_info with
-    None -> Parsing_helper.internal_error "facts should be set"
-  | Some(_,_,n) -> n
-
-let rec compatible_def_term t = 
+let rec compatible_def_term cur_array_length current_incompatible t = 
+  t.t_incompatible <- current_incompatible;
   match t.t_desc with
-    Var(_,l) | FunApp(_,l) -> compatible_def_term_list l
-  | ReplIndex i -> [],[]
+    Var(_,l) | FunApp(_,l) -> 
+      List.iter (compatible_def_term cur_array_length current_incompatible) l
+  | ReplIndex i -> 
+      ()
   | TestE(t1,t2,t3) -> 
-      let def1 = compatible_def_term t1 in
-      let def2 = compatible_def_term t2 in
-      let def3 = compatible_def_term t3 in
-      add_compatible_var_node def1 def2;
-      add_compatible_var_node def1 def3;
-      union_var_node def1 (union_var_node def2 def3)
+      compatible_def_term cur_array_length current_incompatible t1;
+      compatible_def_term cur_array_length current_incompatible t2;
+      let t3_incompatible = Occ_map.add current_incompatible t2.t_occ t2.t_max_occ cur_array_length in
+      compatible_def_term cur_array_length t3_incompatible t3 
   | FindE(l0, t3, _) ->
-      let def3 = compatible_def_term t3 in
-      let accu = ref def3 in
+      let accu_incompatible = ref current_incompatible in
       List.iter (fun (bl, def_list, t1, t2) ->
-	(*Nothing to for def_list: it contains only
-          Var and Fun*)
-	let vars = List.map fst bl in
-	let node = get_node t2.t_facts in
-	let vn = (vars, [node]) in
-	let def1 = compatible_def_term t1 in
-	let def2 = compatible_def_term t2 in
-	add_self_compatible vn;
-	let def_then = add_compatible_seq [def1; vn; def2] in
-	add_compatible_var_node def1 def3;
-	accu := union_var_node def_then (!accu)) l0;
-      !accu
+	let cur_array_length_cond = cur_array_length + List.length bl in
+	List.iter (fun (_,l) -> 
+	  List.iter (compatible_def_term cur_array_length_cond current_incompatible) l) def_list;
+	compatible_def_term cur_array_length_cond current_incompatible t1;
+	compatible_def_term cur_array_length (!accu_incompatible) t2;
+	accu_incompatible := (Occ_map.add (!accu_incompatible) t2.t_occ t2.t_max_occ cur_array_length)
+	     ) l0;
+      compatible_def_term cur_array_length (!accu_incompatible) t3
   | LetE(pat, t1, t2, topt) ->
-      let accu = vars_from_pat [] pat in
-      let node = get_node t2.t_facts in
-      let vn = (accu, [node]) in
-      let def1 = compatible_def_term t1 in
-      let def2 = compatible_def_pat pat in
-      let def3 = compatible_def_term t2 in
-      let def4 = match topt with
-	None -> [],[]
-      |	Some t3 -> compatible_def_term t3 
-      in
-      add_self_compatible vn;
-      let def_in = add_compatible_seq [def1; def2; vn; def3] in
-      add_compatible_var_node def1 def4;
-      add_compatible_var_node def2 def4;
-      union_var_node def_in def4
-  | ResE(b,t) ->
-      let vn = ([b], [get_node t.t_facts]) in
-      let def = compatible_def_term t in
-      add_compatible_var_node vn def;
-      union_var_node def vn
+      compatible_def_term cur_array_length current_incompatible t1;
+      compatible_def_pat cur_array_length current_incompatible pat;
+      compatible_def_term cur_array_length current_incompatible t2;
+      begin
+	match topt with
+	  None -> ()
+	| Some t3 -> 
+	    let t3_incompatible = Occ_map.add current_incompatible t2.t_occ t2.t_max_occ cur_array_length in
+	    compatible_def_term cur_array_length t3_incompatible t3 
+      end
+  | ResE(b,t2) ->
+      compatible_def_term cur_array_length current_incompatible t2
   | EventAbortE _ ->
-      [],[]
+      ()
 
-and compatible_def_term_list = function
-    [] -> [],[]
-  | (a::l) -> 
-      let defl = compatible_def_term_list l in
-      let defa = compatible_def_term a in
-      add_compatible_var_node defa defl;
-      union_var_node defa defl
+and compatible_def_pat cur_array_length current_incompatible = function
+    PatVar b -> ()
+  | PatTuple (f,l) -> List.iter (compatible_def_pat cur_array_length current_incompatible) l
+  | PatEqual t -> compatible_def_term cur_array_length current_incompatible t
 
-and compatible_def_pat = function
-    PatVar b -> [],[]
-  | PatTuple (f,l) -> compatible_def_pat_list l
-  | PatEqual t -> compatible_def_term t
-
-and compatible_def_pat_list = function
-    [] -> [],[]
-  | (a::l) -> 
-      let defl = compatible_def_pat_list l in
-      let defa = compatible_def_pat a in
-      add_compatible_var_node defa defl;
-      union_var_node defa defl
-
-let rec compatible_def_process p =
+let rec compatible_def_process cur_array_length current_incompatible p =
+  p.i_incompatible <- current_incompatible;
   match p.i_desc with
-    Nil -> [],[]
+    Nil -> ()
   | Par(p1,p2) ->
-      let def1 = compatible_def_process p1 in
-      let def2 = compatible_def_process p2 in
-      add_compatible_bi def1 def2;
-      union_var_node def1 def2
+      compatible_def_process cur_array_length current_incompatible p1;
+      compatible_def_process cur_array_length current_incompatible p2
   | Repl(b,p) ->
-      compatible_def_process p
-  | Input((c,tl),pat,p) ->
-      let accu = vars_from_pat [] pat in
-      let node = get_node p.p_facts in
-      let vn = (accu, [node]) in
-      let def1 = compatible_def_term_list tl in
-      let def2 = compatible_def_pat pat in
-      let def3 = compatible_def_oprocess p in
-      add_self_compatible vn;
-      add_compatible_seq [def1; def2; vn; def3]
+      compatible_def_process (cur_array_length+1) current_incompatible p
+  | Input((c,tl),pat,p2) ->
+      List.iter (compatible_def_term cur_array_length current_incompatible) tl;
+      compatible_def_pat cur_array_length current_incompatible pat;
+      compatible_def_oprocess cur_array_length current_incompatible p2 
 
-and compatible_def_oprocess p =
+and compatible_def_oprocess cur_array_length current_incompatible p =
+  p.p_incompatible <- current_incompatible;
   match p.p_desc with
-    Yield | EventAbort _ -> [],[]
-  | Restr(b, p) ->
-      let vn = ([b], [get_node p.p_facts]) in
-      let def = compatible_def_oprocess p in
-      add_compatible_var_node vn def;
-      union_var_node def vn
+    Yield | EventAbort _ -> ()
+  | Restr(b, p2) ->
+      compatible_def_oprocess cur_array_length current_incompatible p2 
   | Test(t,p1,p2) ->
-      let def1 = compatible_def_term t in
-      let def2 = compatible_def_oprocess p1 in
-      let def3 = compatible_def_oprocess p2 in
-      add_compatible_var_node def1 def2;
-      add_compatible_var_node def1 def3;
-      union_var_node def1 (union_var_node def2 def3)
+      compatible_def_term cur_array_length current_incompatible t;
+      compatible_def_oprocess cur_array_length current_incompatible p1;
+      let p2_incompatible = Occ_map.add current_incompatible p1.p_occ p1.p_max_occ cur_array_length in
+      compatible_def_oprocess cur_array_length p2_incompatible p2 
   | Find(l0, p2, _) ->
-      let def3 = compatible_def_oprocess p2 in
-      let accu = ref def3 in
+      let accu_incompatible = ref current_incompatible in
       List.iter (fun (bl, def_list, t, p1) ->
-	(*Nothing to do for def_list: it contains only
-          Var and Fun*)
-	let vars = List.map fst bl in
-	let node = get_node p1.p_facts in
-	let vn = (vars, [node]) in
-	let def1 = compatible_def_term t in
-	let def2 = compatible_def_oprocess p1 in
-	add_self_compatible vn;
-	let def_then = add_compatible_seq [def1; vn; def2] in
-	add_compatible_var_node def1 def3;
-	accu := union_var_node def_then (!accu)) l0;
-      !accu
+	let cur_array_length_cond = cur_array_length + List.length bl in
+	List.iter (fun (_,l) -> 
+	  List.iter (compatible_def_term cur_array_length_cond current_incompatible) l) def_list;
+	compatible_def_term cur_array_length_cond current_incompatible t;
+	compatible_def_oprocess cur_array_length (!accu_incompatible) p1;
+	accu_incompatible := (Occ_map.add (!accu_incompatible) p1.p_occ p1.p_max_occ cur_array_length)
+	     ) l0;
+      compatible_def_oprocess cur_array_length (!accu_incompatible) p2
   | Output((c,tl),t2,p) ->
-      let def1 = compatible_def_term_list tl in
-      let def2 = compatible_def_term t2 in
-      let def3 = compatible_def_process p in
-      add_compatible_seq [def1; def2; def3]
+      List.iter (compatible_def_term cur_array_length current_incompatible) tl;
+      compatible_def_term cur_array_length current_incompatible t2;
+      compatible_def_process cur_array_length current_incompatible p
   | Let(pat,t,p1,p2) ->
-      let accu = vars_from_pat [] pat in
-      let node = get_node p1.p_facts in
-      let vn = (accu, [node]) in
-      let def1 = compatible_def_term t in
-      let def2 = compatible_def_pat pat in
-      let def3 = compatible_def_oprocess p1 in
-      let def4 = compatible_def_oprocess p2 in
-      add_self_compatible vn;
-      let def_in = add_compatible_seq [def1; def2; vn; def3] in
-      add_compatible_var_node def1 def4;
-      add_compatible_var_node def2 def4;
-      union_var_node def_in def4
+      compatible_def_term cur_array_length current_incompatible t;
+      compatible_def_pat cur_array_length current_incompatible pat;
+      compatible_def_oprocess cur_array_length current_incompatible p1;
+      let p2_incompatible = Occ_map.add current_incompatible p1.p_occ p1.p_max_occ cur_array_length in
+      compatible_def_oprocess cur_array_length p2_incompatible p2 
   | EventP(t,p) ->
-      let def1 = compatible_def_term t in
-      let def2 = compatible_def_oprocess p in
-      add_compatible_var_node def1 def2;
-      union_var_node def1 def2
-  | Get(_,_,_,_,_) | Insert (_,_,_) -> internal_error "Get/Insert should have been reduced at this point"
+      compatible_def_term cur_array_length current_incompatible t;
+      compatible_def_oprocess cur_array_length current_incompatible p
+  | Get(_,_,_,_,_) | Insert (_,_,_) -> 
+      internal_error "Get/Insert should have been reduced at this point"
 
 
 let build_compatible_defs p = 
-  empty_comp_process p;
-  ignore (compatible_def_process p)
+  compatible_def_process 0 map_empty p
+
+(* [occ_from_pp pp] returns a triple containing
+   - the occurrence of program point [pp]
+   - the maximum occurrence of program points under [pp] in the syntax tree.
+   (the occurrences of program points under [pp] are then
+   in the interval [occurrence of [pp], max. occ. under [pp]])
+   - the mapping of occurrences of program points [pp'] incompatible with [pp]
+   to the length [l] such that if [pp] with indices [arg]
+   and [pp'] with indices [args'] are both executed, then
+   the suffixes of length [l] of [args] and [args'] must be different.
+   Raises [Not_found] when [pp] does not uniquely identify a program point. *) 
+
+let occ_from_pp = function
+    DProcess(p) -> p.p_occ, p.p_max_occ, p.p_incompatible
+  | DTerm(t) -> t.t_occ, t.t_max_occ, t.t_incompatible
+  | DInputProcess(p) -> p.i_occ, p.i_max_occ, p.i_incompatible
+  | _ -> raise Not_found
+
+(* [map_max f l], where [f] is a function from list elements to integers,
+   returns the maximum of [f a] for elements [a] in [l] *)
+
+let rec map_max f = function
+    [] -> 0
+  | a::l -> max (f a) (map_max f l)
+
+(* [incompatible_suffix_length_pp pp pp'] returns a length [l] such
+   that if [pp] with indices [args] and [pp'] with indices [args'] are
+   both executed, then the suffixes of length [l] of [args] and
+   [args'] must be different.
+   Raises [Not_found] when [pp] with indices [args] and [pp'] with
+   indices [args'] can be executed for any [args,args'].*)
+
+let incompatible_suffix_length_pp pp pp' =
+  let occ, _, occ_map = occ_from_pp pp in
+  let occ', _, occ_map' = occ_from_pp pp' in
+  try 
+    Occ_map.find occ occ_map' 
+  with Not_found ->
+    Occ_map.find occ' occ_map 
+
+(* [both_pp_add_fact fact_accu (args, pp) (args', pp')] 
+   adds to [fact_accu] a fact inferred from the execution of both
+   program point [pp] with indices [args] and 
+   program point [pp'] with indices [args'], if any.*)
+	
+let both_pp_add_fact fact_accu (args, pp) (args', pp') =
+  try
+    let suffix_l = incompatible_suffix_length_pp pp pp' in
+    let args_skip = lsuffix suffix_l args in
+    let args_skip' = lsuffix suffix_l args' in
+    fact_accu := (make_or_list (List.map2 make_diff args_skip args_skip')) :: (!fact_accu)    
+  with Not_found -> ()
+
+(* [incompatible_suffix_length_onepp pp b'] returns a length [l] such
+   that if [pp] with indices [args] is executed and [b'[args]] 
+   is defined, then the suffixes of length [l] of [args] and
+   [args'] must be different.
+   Raises [Not_found] when [pp] with indices [args] can be executed 
+   and [b'[args']] can be defined for any [args,args'].*)
+
+let incompatible_suffix_length_onepp pp b' =
+  let pp_occ, _, pp_occ_map = occ_from_pp pp in
+  map_max (fun n' ->
+    let (occ', _, occ_map') = occ_from_pp n'.definition_success in
+    try 
+      Occ_map.find pp_occ occ_map' 
+    with Not_found ->
+      Occ_map.find occ' pp_occ_map 
+	) b'.def
+
+(* [incompatible_suffix_length b b'] returns a length [l] such that if
+   [b[args]] and [b'[args']] are both defined, then the suffixes of
+   length [l] of [args] and [args'] must be different.
+   Raises [Not_found] when [b[args]] and [b'[args']] can be defined 
+   for any [args,args']. *)
+
+let incompatible_suffix_length b b' =
+  map_max (fun n -> incompatible_suffix_length_onepp n.definition_success b') b.def
 
 (* [is_compatible (b,args) (b',args')] returns true when
    [b[args]] and [b'[args']] may both be defined *)
 
 let is_compatible (b,args) (b',args') =
   (b == b') || 
-  (
-  let l = List.length args in
-  let l' = List.length args' in
-  let min = if l > l' then l' else l in
-  let args_skip = skip (l-min) args in
-  let args_skip' = skip (l'-min) args' in
-  (not (List.for_all2 equal_terms args_skip args_skip')) ||
-  (Binderset.mem b'.compatible b) || 
-  (Binderset.mem b.compatible b')
-      )
+  (try
+    let suffix_l = incompatible_suffix_length b b' in
+    let args_skip = lsuffix suffix_l args in
+    let args_skip' = lsuffix suffix_l args' in
+    (not (List.for_all2 equal_terms args_skip args_skip'))
+  with Not_found -> true)
+
+(* [is_compatible_node (b,args) n (b',args')] returns true when
+   [b[args]] and [b'[args']] may both be defined, with [b[args]]
+   defined at node [n]. *)
+
+let is_compatible_node (b,args) n (b',args') =
+  (b == b') || 
+  (try
+    let suffix_l = incompatible_suffix_length_onepp n.definition_success b' in
+    (*print_string ("incompatible_suffix_length 1 " ^ b.sname ^ "_" ^ (string_of_int b.vname) ^ " " ^ b'.sname ^ "_" ^ (string_of_int b'.vname) ^ " = "); print_int suffix_l; print_newline(); *)
+    let args_skip = lsuffix suffix_l args in
+    let args_skip' = lsuffix suffix_l args' in
+    (not (List.for_all2 equal_terms args_skip args_skip'))
+  with Not_found -> true)
 
 (* [both_def_add_fact fact_accu (b,args) (b',args')]
    adds to [fact_accu] a fact that always holds when
-   [b[args]] and [b'[args']] are both defined. *)
+   [b[args]] and [b'[args']] are both defined, if any. *)
 
 let both_def_add_fact fact_accu (b,args) (b',args') =
-  if not ((b == b') || 
-          (Binderset.mem b'.compatible b) || 
-          (Binderset.mem b.compatible b')) then
-    let l = List.length args in
-    let l' = List.length args' in
-    let min = if l > l' then l' else l in
-    let args_skip = skip (l-min) args in
-    let args_skip' = skip (l'-min) args' in
-    fact_accu := (make_or_list (List.map2 make_diff args_skip args_skip')) :: (!fact_accu)
+  if b != b' then 
+    try
+      let suffix_l = incompatible_suffix_length b b' in
+      let args_skip = lsuffix suffix_l args in
+      let args_skip' = lsuffix suffix_l args' in
+      fact_accu := (make_or_list (List.map2 make_diff args_skip args_skip')) :: (!fact_accu)    
+    with Not_found -> ()
 
+(* [not_after_suffix_length_one_pp pp length_cur_array_pp b'] returns
+   the shortest length [l] such that the program point [pp] cannot be
+   executed with indices [args] after the definition of variable [b']
+   with indices [args'] when [args] and [args'] have a common suffix of
+   length [l].  
+   Raises [Not_found] when [pp] with indices [args] can be executed
+   after the definition of [b'[args']] for any [args,args'].
+   [length_cur_array_pp] is the number of replication indices at
+   program point [pp]. *)
+
+let not_after_suffix_length_one_pp pp length_cur_array_pp b' =
+  let pp_occ, pp_max_occ, pp_occ_map = occ_from_pp pp in
+  map_max (fun n' ->
+    let (occ', _, occ_map') = occ_from_pp n'.definition_success in
+    try 
+      Occ_map.find pp_occ occ_map' 
+    with Not_found ->
+      try
+	Occ_map.find occ' pp_occ_map
+      with Not_found ->
+	if pp_occ <= occ' && occ' <= pp_max_occ then
+	  length_cur_array_pp (* since b' is defined under pp, b' has more indices than pp *)
+	else
+	  raise Not_found
+	) b'.def
+
+
+(* [def_at_pp_add_fact fact_accu pp args (b',args')] adds to
+   [fact_accu] a fact that always holds when [b'[args']] is defined
+   before the execution of program point [pp] with indices [args], if
+   any. *)
+
+let def_at_pp_add_fact fact_accu pp args (b',args') =
+  let length_cur_array_pp = List.length args in
+  try
+    let suffix_l = not_after_suffix_length_one_pp pp length_cur_array_pp b' in
+    let args_skip = lsuffix suffix_l args in
+    let args_skip' = lsuffix suffix_l args' in
+    fact_accu := (make_or_list (List.map2 make_diff args_skip args_skip')) :: (!fact_accu)    
+  with Not_found -> ()
+    
 (* [may_def_before (b,args) (b',args')] returns true when
    [b[args]] may be defined before [b'[args']] *)
 
-let may_def_before (b,args) (b',args') =
+let may_def_before (b,args) (b',args') = 
   (b == b') || 
-  (
-  let l = List.length args in
-  let l' = List.length args' in
-  let min = if l > l' then l' else l in
-  let args_skip = skip (l-min) args in
-  let args_skip' = skip (l'-min) args' in
-  (not (List.for_all2 equal_terms args_skip args_skip')) ||
-  (Binderset.mem b'.compatible b) 
-      )
+  (try
+    let length_cur_array_b' = List.length args' in
+    let suffix_l = map_max (fun n -> not_after_suffix_length_one_pp n.definition_success length_cur_array_b' b) b'.def in
+    let args_skip = lsuffix suffix_l args in
+    let args_skip' = lsuffix suffix_l args' in
+    (not (List.for_all2 equal_terms args_skip args_skip'))
+  with Not_found -> true)
 
 (* Update args_at_creation: since variables in conditions of find have
 as args_at_creation the indices of the find, transformations of the
@@ -3324,6 +3308,99 @@ and update_args_at_creation_pat cur_array = function
 let update_args_at_creation cur_array t =
   auto_cleanup (fun () ->
     update_args_at_creation cur_array t)
+
+(* get needed def_list elements *)
+
+let rec get_needed_deflist_term defined accu t =
+  match t.t_desc with
+    Var(b,l) -> 
+      let br = (b,l) in
+      if not (mem_binderref br defined) then
+	add_binderref br accu
+  | ReplIndex i -> ()
+  | FunApp(f,l) -> List.iter (get_needed_deflist_term defined accu) l
+  | TestE(t1,t2,t3) -> 
+      get_needed_deflist_term defined accu t1;
+      get_needed_deflist_term defined accu t2;
+      get_needed_deflist_term defined accu t3
+  | FindE(l0,t3, find_info) ->
+      List.iter (fun (bl, def_list, t, t1) ->
+	let (defined_t, defined_t1) = defined_refs_find bl def_list defined in
+	get_needed_deflist_term defined_t accu t;
+	get_needed_deflist_term defined_t1 accu t1
+	) l0;
+      get_needed_deflist_term defined accu t3
+  | LetE(pat,t1,t2,topt) ->
+      get_needed_deflist_pat defined accu pat;
+      get_needed_deflist_term defined accu t1;
+      let bpat = vars_from_pat [] pat in
+      let defs = List.map binderref_from_binder bpat in
+      get_needed_deflist_term (defs @ defined) accu t2;
+      begin
+	match topt with
+	  None -> ()
+	| Some t3 -> get_needed_deflist_term defined accu t3
+      end
+  | ResE(b,t) -> get_needed_deflist_term ((binderref_from_binder b)::defined) accu t
+  | EventAbortE f -> ()
+
+and get_needed_deflist_pat defined accu = function
+    PatVar _ -> ()
+  | PatTuple(f,l) -> List.iter (get_needed_deflist_pat defined accu) l
+  | PatEqual t -> get_needed_deflist_term defined accu t
+
+let rec get_needed_deflist_process defined accu p = 
+  match p.i_desc with
+    Nil -> ()
+  | Par(p1,p2) -> get_needed_deflist_process defined accu p1;
+      get_needed_deflist_process defined accu p2
+  | Repl(b,p) -> get_needed_deflist_process defined accu p
+  | Input((c,tl),pat,p) ->
+      List.iter (get_needed_deflist_term defined accu) tl;
+      get_needed_deflist_pat defined accu pat;
+      let bpat = vars_from_pat [] pat in
+      let defs = List.map binderref_from_binder bpat in
+      get_needed_deflist_oprocess (defs @ defined) accu p
+
+and get_needed_deflist_oprocess defined accu p =
+  match p.p_desc with
+    Yield | EventAbort _ -> ()
+  | Restr(b,p) -> get_needed_deflist_oprocess ((binderref_from_binder b)::defined) accu p
+  | Test(t,p1,p2) -> 
+      get_needed_deflist_term defined accu t;
+      get_needed_deflist_oprocess defined accu p1;
+      get_needed_deflist_oprocess defined accu p2
+  | Find(l0,p2, find_info) ->
+      List.iter (fun (bl, def_list, t, p1) ->
+	let (defined_t, defined_p1) = defined_refs_find bl def_list defined in
+	get_needed_deflist_term defined_t accu t;
+	get_needed_deflist_oprocess defined_p1 accu p1
+	) l0;
+      get_needed_deflist_oprocess defined accu p2
+  | Let(pat,t,p1,p2) ->
+      get_needed_deflist_pat defined accu pat;
+      get_needed_deflist_term defined accu t;
+      let bpat = vars_from_pat [] pat in
+      let defs = List.map binderref_from_binder bpat in
+      get_needed_deflist_oprocess (defs @ defined) accu p1;
+      get_needed_deflist_oprocess defined accu p2
+  | Output((c,tl),t2,p) ->
+      List.iter (get_needed_deflist_term defined accu) tl;
+      get_needed_deflist_term defined accu t2;
+      get_needed_deflist_process defined accu p
+  | EventP(t,p) ->
+      get_needed_deflist_term defined accu t;
+      get_needed_deflist_oprocess defined accu p
+  | Get(tbl,patl,topt,p1,p2) ->
+      List.iter (get_needed_deflist_pat defined accu) patl;
+      let bpat = List.fold_left vars_from_pat [] patl in
+      let defs = (List.map binderref_from_binder bpat) @ defined in
+      (match topt with None -> () | Some t -> get_needed_deflist_term defs accu t);
+      get_needed_deflist_oprocess defs accu p1;
+      get_needed_deflist_oprocess defined accu p2
+  | Insert(tbl,tl,p) ->
+      List.iter (get_needed_deflist_term defined accu) tl;
+      get_needed_deflist_oprocess defined accu p
 
 (********** Use the equational theory to simplify a term *************)
 

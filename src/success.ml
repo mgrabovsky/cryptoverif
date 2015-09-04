@@ -4,7 +4,7 @@
  *                                                           *
  *       Bruno Blanchet and David Cadé                       *
  *                                                           *
- *       Copyright (C) ENS, CNRS, INRIA, 2005-2014           *
+ *       Copyright (C) ENS, CNRS, INRIA, 2005-2015           *
  *                                                           *
  *************************************************************)
 
@@ -202,239 +202,6 @@ let display_leaks b0 =
 
 (* We can prove secrecy of part of an array; this is useful for forward secrecy  *)
 
-(* [check_compatiblet ppa ppb t'] and
-   [check_compatible ppa ppb p] check compatibility between two program points [ppa] and [ppa]
-   they return [(has_ppa, has_ppb, lcp)] where
-   [has_ppa] is true when the considered term t'/process p contains the program point [ppa],
-   [has_ppb] is true when the considered term t'/process p contains the program point [ppb],
-   [lcp = -1] when [ppa] and [ppb] cannot be both executed
-   [lcp >= 0] when [ppa] can be executed with indices [l1], [ppb] can be executed with indices [l2],
-   and they can be both executed when the longuest common suffix of [l1] and [l2] has length
-   at most [lcp].
-   When [lcp >= 0], [has_ppa] and [has_ppb] are both [true].
-
-   The program points that we are considering are definitions of variables
-   by [new] or [let] or occurrences of variables in terms. 
-   *)
-
-exception Compatible
-
-let empty_res = (false, false, -1)
-
-let compose_incompatible (has_ppa1, has_ppb1, lcp1) (has_ppa2, has_ppb2, lcp2) =
-  (has_ppa1 || has_ppa2, has_ppb1 || has_ppb2, max lcp1 lcp2)
-
-let compose_compatible (has_ppa1, has_ppb1, lcp1) (has_ppa2, has_ppb2, lcp2) =
-  if (has_ppa1 && has_ppb2) || (has_ppb1 && has_ppa2) then
-    raise Compatible
-  else
-    (has_ppa1 || has_ppa2, has_ppb1 || has_ppb2, max lcp1 lcp2)
-
-let add_indices n (has_ppa, has_ppb, lcp) =
-  if lcp >= 0 then 
-    begin
-      assert(has_ppa && has_ppb);
-      (has_ppa, has_ppb, lcp + n)
-    end
-  else (* lcp = -1 *)
-    if has_ppa && has_ppb then
-      (true, true, n-1)
-    else
-      (has_ppa, has_ppb, -1)
-
-let rec check_compatiblet ppa ppb t' =
-  let has_ppa0 = 
-    match ppa with
-      DTerm t'' -> t' == t''
-    | _ -> false
-  in
-  let has_ppb0 = 
-    match ppb with
-      DTerm t'' -> t' == t''
-    | _ -> false
-  in
-  if has_ppa0 && has_ppb0 then raise Compatible;
-  let current = (has_ppa0, has_ppb0, -1) in
-  match t'.t_desc with
-  | ResE(b',t) ->
-      compose_compatible current (check_compatiblet ppa ppb t)
-  | TestE(t, p1, p2) -> 
-      compose_compatible current 
-	(compose_compatible (check_compatiblet ppa ppb t)
-	   (compose_incompatible (check_compatiblet ppa ppb p1)
-	      (check_compatiblet ppa ppb p2)))
-  | FindE(l0, p2, _) ->
-      let v2 = check_compatiblet ppa ppb p2 in
-      let rec check_l = function
-	  [] -> empty_res
-	| ((bl,def_list,t,p1)::l) ->
-	    compose_compatible (check_l l)
-	      (add_indices (List.length bl)
-		 (compose_compatible
-		    (check_compatible_def_list ppa ppb def_list)
-		    (check_compatiblet ppa ppb t)))
-      in
-      let rec check_res = function
-	  [] -> empty_res
-	| ((bl,def_list,t,p1)::l) ->
-	    compose_incompatible (check_res l)
-	      (check_compatiblet ppa ppb p1)
-      in
-      compose_compatible current 
-	(compose_compatible (check_l l0)
-	   (compose_incompatible (check_res l0) v2))
-  | LetE(pat, t, p1, topt) ->
-      let vpat = check_compatible_pat ppa ppb pat in
-      let vt = check_compatiblet ppa ppb t in
-      let v1 = check_compatiblet ppa ppb p1 in
-      let v2 = 
-	match topt with
-	  None -> empty_res
-	| Some p2 -> check_compatiblet ppa ppb p2 
-      in
-      compose_compatible current 
-	(compose_compatible vt
-	   (compose_compatible vpat
-	      (compose_incompatible v1 v2)))
-  | Var (_,l) | FunApp (_,l) ->
-      compose_compatible current (check_compatiblet_list ppa ppb l)
-  | ReplIndex _ -> current
-  | EventAbortE _ -> Parsing_helper.internal_error "Event should have been expanded"
-
-and check_compatiblet_list ppa ppb = function
-    [] -> empty_res
-  | (a::l) ->
-      compose_compatible (check_compatiblet ppa ppb a)
-	(check_compatiblet_list ppa ppb l)
-
-and check_compatible_pat ppa ppb = function
-    PatVar _ -> empty_res
-  | PatTuple(_,l) -> check_compatible_pat_list ppa ppb l
-  | PatEqual t -> check_compatiblet ppa ppb t
-
-and check_compatible_pat_list ppa ppb = function
-    [] -> empty_res
-  | (a::l) ->
-      compose_compatible (check_compatible_pat ppa ppb a)
-	(check_compatible_pat_list ppa ppb l)
-      
-and check_compatible_def_list ppa ppb = function
-    [] -> empty_res
-  | (_,l)::def_list ->
-      compose_compatible (check_compatiblet_list ppa ppb l)
-	(check_compatible_def_list ppa ppb def_list)
-      
-
-let rec check_compatible ppa ppb p' = 
-  match p'.i_desc with
-    Nil -> empty_res
-  | Par(p1,p2) ->
-      compose_compatible (check_compatible ppa ppb p1)
-	(check_compatible ppa ppb p2)
-  | Repl(b',p) ->
-      add_indices 1 (check_compatible ppa ppb p)
-  | Input((_,tl),pat, p) ->
-      compose_compatible (check_compatiblet_list ppa ppb tl)
-	(compose_compatible (check_compatible_pat ppa ppb pat)
-	   (check_compatibleo ppa ppb p))
-
-and check_compatibleo ppa ppb p =
-  let has_ppa0 =
-    match ppa with
-      DProcess p' -> p == p'
-    | _ -> false
-  in
-  let has_ppb0 =
-    match ppb with
-      DProcess p' -> p == p'
-    | _ -> false
-  in
-  if has_ppa0 && has_ppb0 then raise Compatible;
-  let current = (has_ppa0, has_ppb0, -1) in
-  match p.p_desc with
-    Yield | EventAbort _ -> current
-  | Restr(_,p) ->
-      compose_compatible current (check_compatibleo ppa ppb p)
-  | Test(t, p1, p2) -> 
-      compose_compatible current 
-	(compose_compatible (check_compatiblet ppa ppb t)
-	   (compose_incompatible (check_compatibleo ppa ppb p1)
-	      (check_compatibleo ppa ppb p2)))
-  | Find(l0, p2, _) ->
-      let v2 = check_compatibleo ppa ppb p2 in
-      let rec check_l = function
-	  [] -> empty_res
-	| ((bl,def_list,t,p1)::l) ->
-	    compose_compatible (check_l l)
-	      (add_indices (List.length bl)
-		 (compose_compatible
-		    (check_compatible_def_list ppa ppb def_list)
-		    (check_compatiblet ppa ppb t)))
-      in
-      let rec check_res = function
-	  [] -> empty_res
-	| ((bl,def_list,t,p1)::l) ->
-	    compose_incompatible (check_res l)
-	      (check_compatibleo ppa ppb p1)
-      in
-      compose_compatible current 
-	(compose_compatible (check_l l0)
-	   (compose_incompatible (check_res l0) v2))
-  | Let(pat, t, p1, p2) ->
-      let vpat = check_compatible_pat ppa ppb pat in
-      let vt = check_compatiblet ppa ppb t in
-      let v1 = check_compatibleo ppa ppb p1 in
-      let v2 = check_compatibleo ppa ppb p2 in
-      compose_compatible current 
-	(compose_compatible vt
-	   (compose_compatible vpat
-	      (compose_incompatible v1 v2)))
-  | Output((_,tl),t2,p) ->
-      compose_compatible current 
-	(compose_compatible (check_compatiblet_list ppa ppb tl)
-	   (compose_compatible (check_compatiblet ppa ppb t2)
-	      (check_compatible ppa ppb p)))
-  | EventP(t,p) ->
-      compose_compatible current 
-	(compose_compatible (check_compatiblet ppa ppb t)
-	   (check_compatibleo ppa ppb p))
-  | Get _|Insert _ -> Parsing_helper.internal_error "Get/Insert should not appear here"
-
-
-(* [check_compatible_main fact_accu (lidxa, ppa) (lidxb, ppb)]
-   adds to [fact_accu] a fact inferred from the execution of both
-   program point [ppa] with indices [lidxa] and 
-   program point [ppb] with indices [lidxb], if any. *)
-
-let check_compatible_main fact_accu (lidxa, ppa) (lidxb, ppb) =
-  try 
-    let (has_ppa, has_ppb, lcp) = check_compatible ppa ppb (!whole_game).proc in
-    if not (has_ppa) then
-      begin
-	match ppa with
-	  DTerm t -> print_string "Not found: Term "; Display.display_term t; print_newline()
-	| DProcess p -> print_string "Not found: Process "; Display.display_oprocess "" p
-	| _ -> ()
-      end;
-    if not (has_ppb) then
-      begin
-	match ppb with
-	  DTerm t -> print_string "Not found: Term "; Display.display_term t; print_newline()
-	| DProcess p -> print_string "Not found: Process "; Display.display_oprocess "" p
-	| _ -> ()
-      end;
-    assert(has_ppa && has_ppb);
-    let la = List.length lidxa in
-    let lb = List.length lidxb in
-    assert (lcp < la && lcp < lb);
-      (* The program points ppa and ppb are not compatible *)
-    let lidxa_suffix = Terms.skip (la - lcp - 1) lidxa in
-    let lidxb_suffix = Terms.skip (lb - lcp - 1) lidxb in
-    let fact = Terms.make_or_list (List.map2 Terms.make_diff lidxa_suffix lidxb_suffix) in
-    (* print_string "Added: "; Display.display_term fact; print_newline(); *)
-    fact_accu := fact :: (!fact_accu)
-  with Compatible -> ()
-
 (* [add_facts_at (all_indices, simp_facts0, defined_refs0, pp_list) 
    cur_array new_facts pp fact_info] updates the quadruple 
    [(all_indices, simp_facts0, defined_refs0, pp_list)] where
@@ -449,7 +216,7 @@ let check_compatible_main fact_accu (lidxa, ppa) (lidxb, ppb) =
    fresh indices [lidx'].)
    - [simp_facts0] contains facts that are known to hold. (It is extended with
    facts from [fact_info] and from [new_facts], after renaming
-   of replication indices, as well as from facts inferred by [check_compatible_main]
+   of replication indices, as well as from facts inferred by [Terms.both_pp_add_fact]
    from the list of visited program points.)
    - [defined_refs] contains variables that are known to be defined. (It is extended
    with the variables known to be defined from [fact_info], after renaming
@@ -469,7 +236,7 @@ let add_facts_at (all_indices, simp_facts0, defined_refs0, pp_list) cur_array ne
   let facts1 = List.map (Terms.subst cur_array lidx') (new_facts @ (Facts.get_facts_at fact_info)) in
   let new_pp = (lidx', pp) in
   let fact_accu = ref facts1 in
-  List.iter (check_compatible_main fact_accu new_pp) pp_list;
+  List.iter (Terms.both_pp_add_fact fact_accu new_pp) pp_list;
   let simp_facts1 = Terms.auto_cleanup (fun () -> Facts.simplif_add_list Facts.no_dependency_anal simp_facts0 (!fact_accu)) in
   (lidx', (ri_lidx' @ all_indices, simp_facts1, defined_refs1, new_pp::pp_list))
 

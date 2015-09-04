@@ -4,7 +4,7 @@
  *                                                           *
  *       Bruno Blanchet and David Cadé                       *
  *                                                           *
- *       Copyright (C) ENS, CNRS, INRIA, 2005-2014           *
+ *       Copyright (C) ENS, CNRS, INRIA, 2005-2015           *
  *                                                           *
  *************************************************************)
 
@@ -181,8 +181,8 @@ let rec build_def_fungroup above_node = function
 			  binders = List.map fst restr; 
 			  true_facts_at_def = []; def_vars_at_def = [];
 			  elsefind_facts_at_def = [];
-			  future_binders = []; future_true_facts = []; n_compatible = Terms.compatible_empty;
-			  definition = DFunRestr } 
+			  future_binders = []; future_true_facts = []; 
+			  definition = DFunRestr; definition_success = DFunRestr } 
       in
       List.iter (fun (b,_) -> b.def <- above_node2 :: b.def) restr;
       List.iter (build_def_fungroup above_node2) funlist
@@ -190,8 +190,8 @@ let rec build_def_fungroup above_node = function
     let above_node1 = { above_node = above_node; binders = args; 
 			true_facts_at_def = []; def_vars_at_def = [];
 			elsefind_facts_at_def = [];
-			future_binders = []; future_true_facts = []; n_compatible = Terms.compatible_empty;
-			definition = DFunArgs } 
+			future_binders = []; future_true_facts = []; 
+			definition = DFunArgs; definition_success = DFunArgs } 
     in
     List.iter (fun b -> b.def <- above_node1 :: b.def) args;
     ignore(Terms.def_term None above_node1 [] [] res)
@@ -378,8 +378,8 @@ let check_def_member l =
   let rec st_node = { above_node = st_node; binders = []; 
 		      true_facts_at_def = []; def_vars_at_def = [];
 		      elsefind_facts_at_def = [];
-		      future_binders = []; future_true_facts = []; n_compatible = Terms.compatible_empty;
-		      definition = DNone } 
+		      future_binders = []; future_true_facts = []; 
+		      definition = DNone; definition_success = DNone } 
   in
   List.iter (fun (fg, mode) -> build_def_fungroup st_node fg) l;
   List.iter (fun (fg, mode) -> check_def_fungroup [] fg) l

@@ -4,7 +4,7 @@
  *                                                           *
  *       Bruno Blanchet and David Cadé                       *
  *                                                           *
- *       Copyright (C) ENS, CNRS, INRIA, 2005-2014           *
+ *       Copyright (C) ENS, CNRS, INRIA, 2005-2015           *
  *                                                           *
  *************************************************************)
 
@@ -53,9 +53,9 @@ proof {
   crypto group_to_exp_strict(exp) *;
   SArename s;
   show_game occ;
-  replace 59 "exp(y, @3_x_133)";
-  replace 44 "exp(y, @3_x_130[@i_126])";
-  replace 23 "exp(y, @3_x_133[@i_128])";
+  replace 59 "exp(y, @3_x_259)";
+  replace 44 "exp(y, @3_x_256[@i_252])";
+  replace 23 "exp(y, @3_x_259[@i_254])";
   crypto gdh(exp);
   success
 }

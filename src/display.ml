@@ -4,7 +4,7 @@
  *                                                           *
  *       Bruno Blanchet and David Cadé                       *
  *                                                           *
- *       Copyright (C) ENS, CNRS, INRIA, 2005-2014           *
+ *       Copyright (C) ENS, CNRS, INRIA, 2005-2015           *
  *                                                           *
  *************************************************************)
 
@@ -947,6 +947,7 @@ and display_oprocess indent p =
 	else
 	  display_oprocess_paren indent p1
 	  ) l0;
+      if l0 == [] then print_string "\n";
       if p2.p_desc != Yield then
 	begin
 	  occ_space();

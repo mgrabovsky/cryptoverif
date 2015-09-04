@@ -4,7 +4,7 @@
  *                                                           *
  *       Bruno Blanchet and David Cadé                       *
  *                                                           *
- *       Copyright (C) ENS, CNRS, INRIA, 2005-2014           *
+ *       Copyright (C) ENS, CNRS, INRIA, 2005-2015           *
  *                                                           *
  *************************************************************)
 
@@ -123,22 +123,6 @@ type binder = { sname : string;
 		mutable def : def_node list;
 		   (* Pointer to the nodes at which this variable is defined. 
 		      Set by Terms.build_def_process. *)
-		mutable compatible : binderset;
-		   (* Set of variables that can be defined before
-                      this variable, with the same indices.
-                      - For instance, if the only definitions of b and b' are
-                      ! N ... if ... then (let b = ...) else (let b' = ...)
-		      b and b' cannot be defined simultaneously with the same indices,
-                      b is not in b'.compatible and b' is not in b.compatible.
-		      - If the only definitions of b and b' are
-                      let b = ... in let b' = ... in ...
-                      then b is defined before b' so, 
-                      b is in b'.compatible but b' is not in b.compatible.
-                      - If the only definitions of b and b' are
-                      (... let b = ... in ...) | (... let b' = ... in ...)
-		      then b and b' can be defined in any order,
-		      so b is in b'.compatible and b' is in b.compatible.
-		      Set by Terms.build_compatible_defs *)
 		mutable link : linktype;
 		   (* Link of the variable to a term. 
 		      This is used for implementing substitutions:
@@ -184,10 +168,6 @@ type binder = { sname : string;
 		      of equations, see Facts.orient *)
 	      }
 
-and binderset = (* set of binders represented by a hash table *)
-  { mutable nelem : int;               
-    mutable table : binder list array } 
-
 and binderref = binder * term list
 
 (* Definition graph *)
@@ -205,10 +185,6 @@ and def_node = { above_node : def_node;
                        the elsefind_fact may no longer hold after the definition
                        of b, but it is still present in elsefind_facts_at_def.) 
 		       *)
-		 mutable n_compatible : binderset;
-		    (* Set of variables whose definition is compatible with
-		       the execution of that node (for replication indices
-		       that are suffix of one another) *)
 		 mutable future_binders : binder list;
 		    (* The variables that are guaranteed to be defined
 		       before we reach the end of the current input...output block.
@@ -218,11 +194,13 @@ and def_node = { above_node : def_node;
 		    (* The facts that are guaranteed to be defined 
 		       before we reach the end of the current input...output block.
 		       They come from let definitions and events after this node. *)
-	         definition : def_type 
-		    (* Pointer to the process or term that corresponds to this node *)
+	         definition : program_point;
+		    (* Pointer to the process or term that contains the variable definition *)
+		 definition_success : program_point
+		   (* Pointer to the process or term that is executed just after the variable is defined *)
 	       }
 
-and def_type = 
+and program_point = 
     DProcess of process
   | DInputProcess of inputprocess
   | DTerm of term
@@ -304,7 +282,20 @@ and 'a findbranch = (binder(*the variable defined when the find succeeds*) * rep
 and term = { t_desc : term_desc;
 	     t_type : typet;
 	     t_occ : int;
+	        (* Occurrence of the term *)
+	     t_max_occ : int;
+	        (* Maximum occurrence of any subterm of the considered term.
+		   [Terms.move_occ_term] guarantees that the occurrences of the subterms
+		   of the considered term form exactly the interval [t_occ,t_max_occ].
+		   When [t_max_occ] cannot be set to satisfy this constraint,
+		   it is set to 0. *)
 	     t_loc : Parsing_helper.extent;
+	     mutable t_incompatible : int Occ_map.occ_map;
+	        (* Incompatible program points:
+		   if [(pp -> n) \in t.t_incompatible] and 
+                   the common suffix of [l] and [l'] has length at least [n], then
+		   [t] with indices [l] and [pp] with indices [l'] cannot be both executed.
+		   Program points are represented by their occurrence. *)
 	     mutable t_facts : fact_info }
 
 and fact_info = (term list * binderref list * def_node) option
@@ -336,6 +327,8 @@ and inputprocess_desc =
 and inputprocess =
     { i_desc : inputprocess_desc;
       i_occ : int;
+      i_max_occ : int;
+      mutable i_incompatible : int Occ_map.occ_map; (* similar to t_incompatible *)
       mutable i_facts : fact_info }
 
 and process_desc =  
@@ -353,6 +346,8 @@ and process_desc =
 and process =
     { p_desc : process_desc;
       p_occ : int;
+      p_max_occ : int;
+      mutable p_incompatible : int Occ_map.occ_map; (* similar to t_incompatible *)
       mutable p_facts : fact_info }
 
 (* Equivalences *)
@@ -623,9 +618,20 @@ and state =
       prev_state : (instruct * setf list * detailed_instruct list * state) option }
 
 (* Result of a cryptographic transformation *)
+type failure_reason =
+    Term of term
+  | UntransformableTerm of term
+  | RefWithIndicesWithoutMatchingStandardRef of binderref * binderref
+  | RefWithIndicesWithIncompatibleStandardRef of binderref * binderref * int
+  | IncompatibleRefsWithIndices of binderref * binderref * binderref * binderref * int
+  | NoChange
+  | NoChangeName of binder
+  | NoUsefulChange
+  | NameNeededInStopMode
+
 type trans_res =
     TSuccess of setf list * detailed_instruct list * game
-  | TFailure of (equiv_nm * binder list * instruct list) list
+  | TFailure of (equiv_nm * binder list * instruct list) list * (binder list * failure_reason) list
 
 type simp_facts = term list * term list * elsefind_fact list
 type dep_anal = simp_facts -> term -> term -> term option

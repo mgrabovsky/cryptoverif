@@ -44,10 +44,18 @@ The fact that you are presently reading this means that you have had
 knowledge of the CeCILL-B license and that you accept its terms.
 
 *)
-open Types
+type 'a occ_map = (int * int * 'a) list
 
-type trans_res =
-    CSuccess of state
-  | CFailure of (equiv_nm * binder list * instruct list) list
+let empty = []
 
-val execute_any_crypto : Ptree.ident list list option -> state -> trans_res
+let add map min_occ max_occ image =
+  if max_occ < min_occ then
+    Parsing_helper.internal_error "max_occ not set properly";
+  (min_occ, max_occ, image) :: map
+
+let rec find occ = function 
+    [] -> raise Not_found
+  | (min_occ, max_occ, image)::rest ->
+      if (min_occ <= occ) && (occ <= max_occ) then image else find occ rest
+
+  

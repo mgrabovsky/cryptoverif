@@ -4,7 +4,7 @@
  *                                                           *
  *       Bruno Blanchet and David Cadé                       *
  *                                                           *
- *       Copyright (C) ENS, CNRS, INRIA, 2005-2014           *
+ *       Copyright (C) ENS, CNRS, INRIA, 2005-2015           *
  *                                                           *
  *************************************************************)
 
@@ -1196,54 +1196,12 @@ let reduced_def_list def_node_opt def_list =
       Terms.setminus_binderref def_list (def_vars @ (get_def_vars_above def_node))
   | None -> def_list
 
-(* [filter_suffix_indices seen_refs b args] computes the variables in
-   [seen_refs], different from [b], with indices [args'] such that
-   [args'] and [args] are suffix of one another.
-
-   [b] is excluded because the computation of [n.n_compatible] does not
-   always include [b] when [b] is defined at [n]. *)
-
-let filter_suffix_indices seen_refs b args =
-  let accu = ref [] in
-  List.iter (fun (b',args') ->
-    let l = List.length args in
-    let l' = List.length args' in
-    let min = if l > l' then l' else l in
-    let args_skip = Terms.skip (l-min) args in
-    let args_skip' = Terms.skip (l'-min) args' in
-    if (List.for_all2 Terms.equal_terms args_skip args_skip') &&
-      (b' != b) && (not (List.memq b' (!accu))) then
-      accu := b' :: (!accu)
-		     ) seen_refs;
-  !accu
-
-(* [is_compatible refs_suffix_indices n] returns true when the variables
-   in [refs_suffix_indices] can be defined at node [n], with indices
-   [args] such that [args] and the current replication indices at [n]
-   are suffix of one another. *)
-
-let is_compatible refs_suffix_indices n =
-  (* For safety, when n.n_compatible == Terms.empty_compatible,
-     we consider that n.n_compatible has not been computed, so
-     all variables are considered compatible. 
-     Similarly, when b.compatible == Terms.compatible_empty,
-     all variables are considered compatible with b. This is 
-     important for the proof of correspondences, because we 
-     introduce new variables for which compatible is not set. *)
-  (n.n_compatible == Terms.compatible_empty) ||
-  (List.for_all (fun b -> (b.compatible == Terms.compatible_empty) || 
-                          (Binderset.mem n.n_compatible b)) refs_suffix_indices)
-
 (* [get_compatible_def_nodes def_vars b l] returns the list of 
    possible definitions nodes for [b[l]], compatible with
    the knowledge that the variables in [def_vars] are defined. *)
 
 let get_compatible_def_nodes def_vars b l =
-  (* Compute the variables for which we are sure that they are defined
-     with indices such that these indices and l are suffix of one another *)
-  let refs_suffix_indices = filter_suffix_indices def_vars b l in
-  (* Keep only the nodes that define b and that are compatible with these variables *)
-  List.filter (is_compatible refs_suffix_indices) b.def 
+  List.filter (fun n -> List.for_all (Terms.is_compatible_node (b,l) n) def_vars) b.def 
 
 (* [add_def_vars current_node def_vars_accu seen_refs br] adds in
    [def_vars_accu] the variables that are known to be defined when [br]
@@ -1376,9 +1334,10 @@ let facts_from_defined current_node def_list =
 
 let get_def_vars_at = function
     Some (_,def_vars,n) ->
-      let seen_refs = ref (get_def_vars_above n) in
+      let done_refs = ref (get_def_vars_above n) in
+      let seen_refs = ref (def_vars @ (!done_refs)) in
       (* Note: def_vars contains n.def_vars_at_def *)
-      List.iter (add_def_vars (Some n) seen_refs (ref [])) def_vars;
+      List.iter (add_def_vars (Some n) seen_refs done_refs) def_vars;
       !seen_refs
   | None -> []
 
@@ -1390,7 +1349,7 @@ let get_facts_at = function
   | Some(true_facts, def_vars, n) ->
       let fact_accu = ref (filter_ifletfindres true_facts) in
       (* Note: def_vars contains n.def_vars_at_def *)
-      List.iter (add_facts (Some n) fact_accu (ref []) (ref [])) def_vars;
+      List.iter (add_facts (Some n) fact_accu (ref def_vars) (ref [])) def_vars;
       !fact_accu
 
 (* Functions useful to simplify def_list *)
@@ -1432,6 +1391,109 @@ let rec remove_subterms accu = function
 let eq_deflists dl dl' =
   (List.for_all (fun br' -> Terms.mem_binderref br' dl) dl') &&
   (List.for_all (fun br -> Terms.mem_binderref br dl') dl) 
+
+(* [update_def_list_term already_defined newly_defined bl def_list tc' p'] returns an updated [def_list]
+   after modifying a branch of find (when the find is a term). 
+   [already_defined] is a list of variables already known to be defined
+   above the find.
+   [newly_defined] is the set of variables whose definition is guaranteed
+   by the old defined condition [def_list]; it is used only for a sanity check.
+   [bl, def_list, tc', p'] describe the modified branch of find:
+   [bl] contains the indices of find
+   [def_list] is the old def_list
+   [tc'] is the modified condition of the find
+   [p'] is the modified then branch of the find. *) 
+
+let update_def_list_term already_defined newly_defined bl def_list tc' p' =
+  (* Compute in [accu_needed] the variable references that need to be included in the "defined"
+     condition, to make sure that all variable references present in tc' and p'
+     are in scope or in a defined condition *)
+  let accu_needed = ref [] in
+  Terms.get_needed_deflist_term already_defined accu_needed tc';
+  (* Replace vars with repl_indices in p', to get the variable
+     references that need to occur in the new def_list *)
+  let bl_rev_subst = List.map (fun (b,b') -> (b, Terms.term_from_repl_index b')) bl in
+  let p'_repl_indices = Terms.subst3 bl_rev_subst p' in
+  Terms.get_needed_deflist_term already_defined accu_needed p'_repl_indices;
+  (* Compute the subterms of [accu_needed] *)
+  let accu_needed_subterm = ref [] in
+  List.iter (Terms.close_def_subterm accu_needed_subterm) (!accu_needed);
+  let needed_occur = !accu_needed_subterm in
+  (* Safety check: check that the definition of all needed variables 
+     can be inferred from the original defined condition *)
+  if not (List.for_all (fun br -> Terms.mem_binderref br newly_defined) needed_occur) then
+    Parsing_helper.internal_error "Hem, that's strange: the update of a defined condition of find may be wrong";
+  (* Update the defined condition to include [needed_occur],
+     but remove elements that are no longer useful *)
+  let implied_needed_occur = def_vars_from_defined None needed_occur in
+  let def_list'' = Terms.setminus_binderref 
+      (Terms.setminus_binderref def_list implied_needed_occur) already_defined in
+  let def_list3 = remove_subterms [] (needed_occur @ (filter_def_list [] def_list'')) in
+  if (List.length def_list3 < List.length def_list) ||
+  (not (eq_deflists def_list def_list3)) then
+    def_list3 
+  else
+    def_list
+
+(* [update_def_list_process already_defined newly_defined bl def_list t' p1'] returns an updated [def_list]
+   after modifying a branch of find (when the find is a process). 
+   [already_defined] is a list of variables already known to be defined
+   above the find.
+   [newly_defined] is the set of variables whose definition is guaranteed
+   by the old defined condition [def_list]; it is used only for a sanity check.
+   [bl, def_list, t', p1'] describe the modified branch of find:
+   [bl] contains the indices of find
+   [def_list] is the old def_list
+   [t'] is the modified condition of the find
+   [p1'] is the modified then branch of the find. *) 
+
+let update_def_list_process already_defined newly_defined bl def_list t' p1' =
+  (* Compute in [accu_needed] the variable references that need to be included in the "defined"
+     condition, to make sure that all variable references present in t' and p1'
+     are in scope or in a defined condition *)
+  let accu_needed = ref [] in
+  Terms.get_needed_deflist_term already_defined accu_needed t';
+  (* Replace vars with repl_indices in p1', to get the variable
+     references that need to occur in the new def_list *)
+  let bl_rev_subst = List.map (fun (b,b') -> (b, Terms.term_from_repl_index b')) bl in
+  let p1'_repl_indices = Terms.subst_oprocess3 bl_rev_subst p1' in
+  Terms.get_needed_deflist_oprocess already_defined accu_needed p1'_repl_indices;
+  (* Compute the subterms of [accu_needed] *)
+  let accu_needed_subterm = ref [] in
+  List.iter (Terms.close_def_subterm accu_needed_subterm) (!accu_needed);
+  let needed_occur = !accu_needed_subterm in
+  (* Safety check: check that the definition of all needed variables 
+     can be inferred from the original defined condition *)
+  if not (List.for_all (fun br -> Terms.mem_binderref br newly_defined) needed_occur) then
+    begin
+      print_string "find ";
+      Display.display_list (fun (b, b') -> Display.display_binder b; print_string " = "; Display.display_repl_index b') bl;
+      print_string " suchthat defined(";
+      Display.display_list (fun (b,tl) -> Display.display_var b tl) def_list;
+      print_string ") && ";
+      Display.display_term t';
+      print_string " then\n";
+      Display.display_oprocess "" p1';
+      print_string "Needed refs = ";
+      Display.display_list (fun (b,tl) -> Display.display_var b tl) needed_occur;
+      print_newline();
+      print_string "Newly defined = ";
+      Display.display_list (fun (b,tl) -> Display.display_var b tl) newly_defined;
+      print_newline();
+      Parsing_helper.internal_error "Hem, that's strange: the update of a defined condition of find may be wrong"
+    end;
+  (* Update the defined condition to include [needed_occur],
+     but remove elements that are no longer useful *)
+  let implied_needed_occur = def_vars_from_defined None needed_occur in
+  let def_list'' = Terms.setminus_binderref
+      (Terms.setminus_binderref def_list implied_needed_occur) already_defined in
+  let def_list3 = remove_subterms [] (needed_occur @ (filter_def_list [] def_list'')) in
+  if (List.length def_list3 < List.length def_list) ||
+  (not (eq_deflists def_list def_list3)) then
+    def_list3 
+  else
+    def_list
+
 
 (*****
    [check_distinct b g] shows that elements of the array [b] 
@@ -1855,7 +1917,7 @@ let get_facts_at_cases = function
       let fact_accu = ref (filter_ifletfindres true_facts) in
       let fact_accu_cases = ref [] in
       (* Note: def_vars contains n.def_vars_at_def *)
-      List.iter (add_facts (Some n) (fact_accu, fact_accu_cases) (ref []) (ref [])) def_vars;
+      List.iter (add_facts (Some n) (fact_accu, fact_accu_cases) (ref def_vars) (ref [])) def_vars;
       !fact_accu, !fact_accu_cases
 
 (* [includes l1 l2] returns true when [l1] is included in [l2] *)
@@ -1930,8 +1992,8 @@ let check_corresp event_accu (t1,t2) g =
     let rec def_node = { above_node = def_node; binders = [];
 			 true_facts_at_def = []; def_vars_at_def = []; 
 			 elsefind_facts_at_def = [];
-			 future_binders = []; future_true_facts = []; n_compatible = Terms.compatible_empty;
-			 definition = DNone }
+			 future_binders = []; future_true_facts = []; 
+			 definition = DNone; definition_success = DNone }
     in
     b.def <- [def_node];
     let b' = Terms.new_binder b in

@@ -4,7 +4,7 @@
  *                                                           *
  *       Bruno Blanchet and David Cadé                       *
  *                                                           *
- *       Copyright (C) ENS, CNRS, INRIA, 2005-2014           *
+ *       Copyright (C) ENS, CNRS, INRIA, 2005-2015           *
  *                                                           *
  *************************************************************)
 
@@ -180,72 +180,6 @@ and find_binders_reco p =
   | Get _|Insert _ -> Parsing_helper.internal_error "Get/Insert should not appear here"
 
 
-(* [update_def_list_term t bl def_list tc' p'] returns an updated [def_list]
-   after modifying a branch of find (when the find is a term). 
-   [t] is the find term
-   [bl, def_list, tc', p'] describe the modified branch of find:
-   [bl] contains the indices of find
-   [def_list] is the old def_list
-   [tc'] is the modified condition of the find
-   [p'] is the modified then branch of the find. *) 
-
-let update_def_list_term t bl def_list tc' p' =
-  let this_branch_node = Facts.get_node t.t_facts in 
-  let def_vars_cond = Facts.def_vars_from_defined this_branch_node def_list in
-  let accu_needed = ref [] in
-  Terms.get_deflist_subterms accu_needed tc';
-  (* Replace vars with repl_indices in p', to get the variable
-     references that need to occur in the new def_list *)
-  let bl_rev_subst = List.map (fun (b,b') -> (b, Terms.term_from_repl_index b')) bl in
-  let p'_repl_indices = Terms.subst3 bl_rev_subst p' in
-  Terms.get_deflist_subterms accu_needed p'_repl_indices;
-  let accu_needed_subterm = ref [] in
-  List.iter (Terms.close_def_subterm accu_needed_subterm) (!accu_needed);
-  let needed_occur = 
-    (Facts.reduced_def_list t.t_facts 
-       (Terms.inter_binderref (!accu_needed_subterm) def_vars_cond)) in
-  let implied_needed_occur = Facts.def_vars_from_defined None needed_occur in
-  let def_list'' = Terms.setminus_binderref def_list implied_needed_occur in
-  let def_list3 = Facts.remove_subterms [] (needed_occur @ (Facts.filter_def_list [] def_list'')) in
-  if (List.length def_list3 < List.length def_list) ||
-  (not (Facts.eq_deflists def_list def_list3)) then
-    def_list3 
-  else
-    def_list
-
-(* [update_def_list_process p bl def_list t' p1'] returns an updated [def_list]
-   after modifying a branch of find (when the find is a process). 
-   [p] is the find process
-   [bl, def_list, t', p1'] describe the modified branch of find:
-   [bl] contains the indices of find
-   [def_list] is the old def_list
-   [t'] is the modified condition of the find
-   [p1'] is the modified then branch of the find. *) 
-
-let update_def_list_process p bl def_list t' p1' =
-  let this_branch_node = Facts.get_node p.p_facts in 
-  let def_vars_cond = Facts.def_vars_from_defined this_branch_node def_list in
-  let accu_needed = ref [] in
-  Terms.get_deflist_subterms accu_needed t';
-  (* Replace vars with repl_indices in p1', to get the variable
-     references that need to occur in the new def_list *)
-  let bl_rev_subst = List.map (fun (b,b') -> (b, Terms.term_from_repl_index b')) bl in
-  let p1'_repl_indices = Terms.subst_oprocess3 bl_rev_subst p1' in
-  Terms.get_deflist_oprocess accu_needed p1'_repl_indices;
-  let accu_needed_subterm = ref [] in
-  List.iter (Terms.close_def_subterm accu_needed_subterm) (!accu_needed);
-  let needed_occur = 
-    (Facts.reduced_def_list p.p_facts 
-       (Terms.inter_binderref (!accu_needed_subterm) def_vars_cond)) in
-  let implied_needed_occur = Facts.def_vars_from_defined None needed_occur in
-  let def_list'' = Terms.setminus_binderref def_list implied_needed_occur in
-  let def_list3 = Facts.remove_subterms [] (needed_occur @ (Facts.filter_def_list [] def_list'')) in
-  if (List.length def_list3 < List.length def_list) ||
-  (not (Facts.eq_deflists def_list def_list3)) then
-    def_list3 
-  else
-    def_list
-
 (*
 One pass on the initial game up to the program point occ to
 - compute cur_array (current replication indices)
@@ -391,18 +325,12 @@ let rec check_term defined_refs cur_array env = function
       try 
 	match StringMap.find s env with
 	  EVar(b) -> 
-	    { t_desc = Var(b,List.map Terms.term_from_repl_index b.args_at_creation); 
-	      t_type = b.btype; t_occ = Terms.new_occ(); t_loc = ext2; t_facts = None }
+	    Terms.new_term b.btype ext2 (Var(b,List.map Terms.term_from_repl_index b.args_at_creation))
 	| EReplIndex(b) ->
-	    { t_desc = ReplIndex(b); 
-	      t_type = b.ri_type; t_occ = Terms.new_occ(); t_loc = ext2; t_facts = None }
+	    Terms.new_term b.ri_type ext2 (ReplIndex(b))
 	| EFunc(f) -> 
 	    if fst (f.f_type) = [] then
-	      { t_desc = FunApp(f, []); 
-		t_type = snd f.f_type; 
-		t_occ = Terms.new_occ(); 
-		t_loc = ext2; 
-		t_facts = None }
+	      Terms.new_term (snd f.f_type) ext2 (FunApp(f, []))
 	    else
 	      raise (Error(s ^ " has no arguments but expects some", ext))
 	| _ -> raise (Error(s ^ " should be a variable or a function", ext))
@@ -418,8 +346,7 @@ let rec check_term defined_refs cur_array env = function
 		  if not (Terms.mem_binderref (b,tl'') defined_refs') then
 		    raise (Error("The definition of an out of scope reference should be guaranteed by a defined condition", ext));
 	    end;
-	    { t_desc = Var(b,tl''); 
-	      t_type = b.btype; t_occ = Terms.new_occ(); t_loc = ext2; t_facts = None }
+	    Terms.new_term b.btype ext2 (Var(b,tl''))
 	| NoDef | FindCond ->
 	    raise (Error(s ^ " is referenced outside its scope and is either\ndefined in a condition of find or never defined", ext))
       with Not_found ->
@@ -427,8 +354,7 @@ let rec check_term defined_refs cur_array env = function
       end
   | PArray((s, ext), tl), ext2 ->
       let (b, tl'') = check_br defined_refs cur_array env ((s,ext),tl) in
-      { t_desc = Var(b,tl''); 
-	t_type = b.btype; t_occ = Terms.new_occ(); t_loc = ext2; t_facts = None }
+      Terms.new_term b.btype ext2 (Var(b,tl''))
   | PFunApp((s,ext), tl),ext2 ->
       let tl' = List.map (check_term defined_refs cur_array env) tl in
       begin
@@ -436,8 +362,7 @@ let rec check_term defined_refs cur_array env = function
 	match StringMap.find s env with
 	  EFunc(f) ->
 	    check_type_list ext2 tl tl' (fst f.f_type);
-	    { t_desc = FunApp(f, tl'); 
-	      t_type = snd f.f_type; t_occ = Terms.new_occ(); t_loc = ext2; t_facts = None }
+	    Terms.new_term (snd f.f_type) ext2 (FunApp(f, tl'))
 	| _ -> raise (Error(s ^ " should be a function", ext))
       with Not_found ->
 	raise (Error(s ^ " not defined", ext))
@@ -446,8 +371,7 @@ let rec check_term defined_refs cur_array env = function
       let tl' = List.map (check_term defined_refs cur_array env) tl in
       let f = Settings.get_tuple_fun (List.map (fun t -> t.t_type) tl') in
       check_type_list ext2 tl tl' (fst f.f_type);
-      { t_desc = FunApp(f, tl'); 
-	t_type = snd f.f_type; t_occ = Terms.new_occ(); t_loc = ext2; t_facts = None }
+      Terms.new_term (snd f.f_type) ext2 (FunApp(f, tl'))
   | (PTestE _ | PLetE _ | PFindE _), ext ->
       raise (Error("if/let/find should appear as terms only in conditions of find", ext))
   | PResE _, ext ->
@@ -595,8 +519,7 @@ let rec check_find_cond defined_refs cur_array env = function
       check_type (snd t1) t1' Settings.t_bool;
       if t2'.t_type != t3'.t_type then
 	raise (Error("Both branches of a test should yield the same type", ext));
-      { t_desc = TestE(t1', t2', t3'); 
-	t_type = t2'.t_type; t_occ = Terms.new_occ(); t_loc = ext; t_facts = None }
+      Terms.new_term t2'.t_type ext (TestE(t1', t2', t3'))
   | PLetE(pat, t1, t2, topt), ext ->
       let t1' = check_term (Some defined_refs) cur_array env t1 in
       let (env', pat') = check_pattern true defined_refs cur_array env (Some t1'.t_type) pat in
@@ -615,8 +538,7 @@ let rec check_find_cond defined_refs cur_array env = function
 	| Some t3' -> if t2'.t_type != t3'.t_type then
 	    raise (Error("Both branches of a let should return the same type", ext))
       end;
-      { t_desc = LetE(pat', t1', t2', topt'); 
-	t_type = t2'.t_type; t_occ = Terms.new_occ(); t_loc = ext; t_facts = None }
+      Terms.new_term t2'.t_type ext (LetE(pat', t1', t2', topt'))
   | PResE((s1,ext1),(s2,ext2),t), ext ->
       raise (Error("new should not appear as term", ext))
 (*
@@ -626,11 +548,7 @@ let rec check_find_cond defined_refs cur_array env = function
       let b = get_var true env (s1, ext1) (Some ty) cur_array in
       let env' = StringMap.add s1 (EVar b) env in
       let t' = check_find_cond defined_refs cur_array env' t in
-      { t_desc = ResE(b, t');
-	t_type = t'.t_type;
-	t_occ = Terms.new_occ();
-	t_loc = ext;
-	t_facts = None }
+      Terms.new_term t'.t_type ext (ResE(b, t'))
 *)
   | PEventAbortE _, ext ->
       raise (Error("event_abort should not appear as term", ext))
@@ -671,8 +589,7 @@ let rec check_find_cond defined_refs cur_array env = function
 	  raise (Error("All branches of a if or find should return the same type", ext));
 	(bl_comb, def_list', t1', t2')) l0 
       in
-      { t_desc = FindE(l0', t3', Nothing); 
-	t_type = t3'.t_type; t_occ = Terms.new_occ(); t_loc = ext; t_facts = None }
+      Terms.new_term t3'.t_type ext (FindE(l0', t3', Nothing))
   | x -> check_term (Some defined_refs) cur_array env x
 
 
@@ -822,7 +739,9 @@ and insert_inso count occ ins env cur_array p =
 	  let count_after = !count in
 	  let def_list' = 
 	    if (count_before == 0) && (count_after == 1) then
-	      update_def_list_process p bl def_list t p'
+	      let already_defined = Facts.get_def_vars_at p.p_facts in
+	      let newly_defined = Facts.def_vars_from_defined (Facts.get_node p.p_facts) def_list in
+	      Facts.update_def_list_process already_defined newly_defined bl def_list t p'
 	    else
 	      def_list
 	  in
@@ -1009,7 +928,10 @@ and replace_tfind_cond count env cur_array t =
 	(* Update def_list if needed *)
 	let def_list' = 
 	  match count_before, count_after with
-	    RepToDo _, RepDone _ -> update_def_list_term t bl def_list tc' p'
+	    RepToDo _, RepDone _ -> 
+	      let already_defined = Facts.get_def_vars_at t.t_facts in
+	      let newly_defined = Facts.def_vars_from_defined (Facts.get_node t.t_facts) def_list in
+	      Facts.update_def_list_term already_defined newly_defined bl def_list tc' p'
 	  | _ -> def_list
 	in
 	(bl, def_list', tc', p')
@@ -1080,7 +1002,9 @@ and replace_to count env cur_array p =
 	  let def_list' = 
 	    match count_before, count_after with
 	      RepToDo _, RepDone _ ->
-		update_def_list_process p bl def_list t' p1'
+		let already_defined = Facts.get_def_vars_at p.p_facts in
+		let newly_defined = Facts.def_vars_from_defined (Facts.get_node p.p_facts) def_list in
+		Facts.update_def_list_process already_defined newly_defined bl def_list t' p1'
 	    | _ -> def_list
 	  in
 	  (bl, def_list', t', p1')

@@ -4,7 +4,7 @@
  *                                                           *
  *       Bruno Blanchet and David Cadé                       *
  *                                                           *
- *       Copyright (C) ENS, CNRS, INRIA, 2005-2014           *
+ *       Copyright (C) ENS, CNRS, INRIA, 2005-2015           *
  *                                                           *
  *************************************************************)
 
@@ -48,6 +48,62 @@ knowledge of the CeCILL-B license and that you accept its terms.
    primitive. This is the key operation. *)
 
 open Types
+
+exception OneFailure of failure_reason
+
+let display_failure_reason = function
+    Term t -> 
+      print_string ("At " ^ (string_of_int t.t_occ) ^ ", term ");
+      Display.display_term t;
+      print_string " could not be discharged";
+      print_newline()
+  | UntransformableTerm t ->
+      print_string ("At " ^ (string_of_int t.t_occ) ^ ", term ");
+      Display.display_term t;
+      print_string " could not be discharged\n(it occurs as complex find condition or input channel, so cannot be tranformed)";
+      print_newline()
+  | RefWithIndicesWithoutMatchingStandardRef((b,l),(b',l')) ->
+      Display.display_var b l;
+      print_string " is mapped to ";
+      Display.display_var b' l';
+      print_string ".\nI could not find a usage of ";
+      Display.display_binder b;
+      print_string " mapped to ";
+      Display.display_binder b';
+      print_string " in a standard reference.\n"
+  | RefWithIndicesWithIncompatibleStandardRef((b,l),(b',l'),k0) ->
+      Display.display_var b l;
+      print_string " is mapped to ";
+      Display.display_var b' l';
+      print_string ".\n";
+      print_string ("Do not share the first " ^ (string_of_int k0) ^ " sequences of random variables with the expression(s) that map ");
+      Display.display_binder b;
+      print_string " to ";
+      Display.display_binder b';
+      print_string " in a standard reference.\n"
+  | IncompatibleRefsWithIndices((b1,l1),(b1',l1'),(b2,l2),(b2',l2'),k0) ->
+      Display.display_var b1 l1;
+      print_string " is mapped to ";
+      Display.display_var b1' l1';
+      print_string ";\n";
+      Display.display_var b2 l2;
+      print_string " is mapped to ";
+      Display.display_var b2' l2';
+      print_string (".\nCommon prefix of length " ^ (string_of_int k0) ^ ".\n");
+      print_string ("The corresponding expressions with standard references do not share the first " ^ (string_of_int k0) ^ " sequences of random variables\n.")
+  | NoChange ->
+      print_string "Nothing transformed\n"
+  | NoChangeName bn ->
+      print_string ("Nothing transformed using the suggested name " ^ (Display.binder_to_string bn) ^ "\n")
+  | NoUsefulChange ->
+      print_string "The transformation did not use the useful_change oracles, or oracles deemed useful by default.\n"
+  | NameNeededInStopMode ->
+      print_string "The transformation requires random variables, but you provided none and prevented me from adding some automatically.\n"
+
+let fail failure_reason =
+  if (!Settings.debug_cryptotransf) > 0 then
+    display_failure_reason failure_reason;
+  raise (OneFailure(failure_reason))
 
 type where_info =
     FindCond | Event | ElseWhere
@@ -2266,16 +2322,8 @@ let check_term where_info l c defined_refs t =
 	end
       end;
     r
-  with x ->
-    if (!Settings.debug_cryptotransf) > 0 then
-      begin
-	print_string "Term ";
-	Display.display_term t;
-	print_string " could not be discharged";
-	print_newline()
-      end;
-    raise x
-
+  with NoMatch ->
+    fail (Term t)
 
 let rec check_pat cur_array accu defined_refs = function
     PatVar b -> accu := (Terms.binderref_from_binder b)::(!accu); success_no_advice
@@ -2349,15 +2397,8 @@ and check_cpat = function
 let check_cterm t =
   try
     check_cterm t 
-  with x ->
-    if (!Settings.debug_cryptotransf) > 0 then
-      begin
-	print_string "Term ";
-	Display.display_term t;
-	print_string " could not be discharged\n(it occurs as complex find condition or input channel, so cannot be tranformed)";
-	print_newline()
-       end;
-    raise x
+  with NoMatch ->
+    fail (UntransformableTerm t)
 
 
 (* Conditions of find are transformed only if they
@@ -2438,18 +2479,7 @@ let check_lhs_array_ref() =
 		List.exists (fun (b1,b1') -> (b1 == b) && (b1' == b')) mapping'.before_transfo_restr
 		  ) (!map)
 	    with Not_found ->
-	      if (!Settings.debug_cryptotransf) > 0 then
-		begin
-		  Display.display_var b l;
-	          print_string " is mapped to ";
-	          Display.display_var b' l';
-	          print_string ".\nI could not find a usage of ";
-	          Display.display_binder b;
-	          print_string " mapped to ";
-	          Display.display_binder b';
-	          print_string " in a standard reference.\n"
-		end; 
-	      raise NoMatch
+	      fail (RefWithIndicesWithoutMatchingStandardRef((b,l),(b',l')))
 	  in
 	  (* Display.display_var b l;
 	  print_string " is mapped to ";
@@ -2469,21 +2499,7 @@ let check_lhs_array_ref() =
 			(Terms.lsuffix k0 mapping.before_transfo_name_table)
 			(Terms.lsuffix k0 mapping'.before_transfo_name_table))
 	      then 
-		begin
-		  if (!Settings.debug_cryptotransf) > 0 then
-		    begin
-		      Display.display_var b l;
-		      print_string " is mapped to ";
-		      Display.display_var b' l';
-		      print_string ".\n";
-		      print_string ("Do not share the first " ^ (string_of_int k0) ^ " sequences of random variables with the expression(s) that map ");
-		      Display.display_binder b;
-		      print_string " to ";
-		      Display.display_binder b';
-		      print_string " in a standard reference.\n"
-                    end;
-		  raise NoMatch
-		end;
+		fail (RefWithIndicesWithIncompatibleStandardRef((b,l),(b',l'),k0));
 	      (* TO DO implement support for array references that use
 	      both arguments and replication indices. Also modify
 	      check.ml accordingly to allow such references 
@@ -2513,21 +2529,7 @@ let check_lhs_array_ref() =
 			    (Terms.lsuffix k0 mapping1'.before_transfo_name_table)
 			    (Terms.lsuffix k0 mapping2'.before_transfo_name_table))
 		  then 
-		    begin
-		      if (!Settings.debug_cryptotransf) > 0 then
-			begin	      
-			  Display.display_var b1 l1;
-			  print_string " is mapped to ";
-			  Display.display_var b1' l1';
-			  print_string ";\n";
-			  Display.display_var b2 l2;
-			  print_string " is mapped to ";
-			  Display.display_var b2' l2';
-			  print_string (".\nCommon prefix of length " ^ (string_of_int k0) ^ ".\n");
-			  print_string ("The corresponding expressions with standard references do not share the first " ^ (string_of_int k0) ^ " sequences of random variables\n.")
-			end; 
-		      raise NoMatch
-		    end;
+		    fail (IncompatibleRefsWithIndices((b1,l1),(b1',l1'),(b2,l2),(b2',l2'),k0));
 	          (* TO DO implement support for array references that share
 		     arguments. Also modify check.ml accordingly to allow such 
 		     references 
@@ -3790,13 +3792,13 @@ let map_has_exist (((_, lm, _, _, _, _),_) as apply_equiv) map =
 
 type trans_res =
   TSuccessPrio of setf list * detailed_instruct list * game
-| TFailurePrio of to_do_t
+| TFailurePrio of to_do_t * (binder list * failure_reason) list
 
 let transfo_expand p q =
   Transf_expand.expand_process { proc = do_crypto_transform p; game_number = -1; current_queries = q }
 	
 let rec try_with_restr_list apply_equiv = function
-    [] -> TFailurePrio []
+    [] -> TFailurePrio([],[])
   | (b::l) ->
         begin
 	  rebuild_map_mode := true;
@@ -3818,21 +3820,14 @@ let rec try_with_restr_list apply_equiv = function
 	    (* If global_sthg_discharged is false, nothing done; b is never used in positions
                in which it can be discharged; try another restriction list *)
 	    if not (!global_sthg_discharged) then 
-	      begin
-		if (!Settings.debug_cryptotransf) > 0 then
-		  print_string "Nothing transformed\n";
-		raise NoMatch
-	      end;
+	      fail NoChange;
 	    begin
 	      match b with
 		[] -> ()
-	      |	[bn, bopt] -> if (!bopt) == DontKnow then
-		  begin
+	      |	[bn, bopt] -> 
+		  if (!bopt) == DontKnow then
 		    (* The suggested name has not been used at all, fail*)
-		    if (!Settings.debug_cryptotransf) > 0 then
-		      print_string ("Nothing transformed using the suggested name " ^ (Display.binder_to_string bn) ^ "\n");
-		    raise NoMatch
-		  end
+		    fail (NoChangeName bn)
 	      |	_ -> Parsing_helper.internal_error "Unexpected name list in try_with_restr_list"
 	    end;
 	    (* When (!map) == [], nothing done; in fact, b is never used in the game; try another name *)
@@ -3852,22 +3847,30 @@ let rec try_with_restr_list apply_equiv = function
 		    TSuccessPrio ((compute_proba apply_equiv) @ proba', ins @ [DCryptoTransf(apply_equiv, List.map fst discharge_names)], g')
 		  end
 		else
-		  begin
-		    if (!Settings.debug_cryptotransf) > 0 then
-		      print_string "The transformation did not use the useful_change oracles, or oracles deemed useful by default.\n";
-		    try_with_restr_list apply_equiv l
-		  end
+		  fail NoUsefulChange
 	      end
             else
 	      begin
 		Terms.vcounter := vcounter; (* This transformation failed, forget the variables *)
 		match try_with_restr_list apply_equiv l with
-		  TSuccessPrio (prob,ins,g') -> TSuccessPrio (prob,ins,g')
-		| TFailurePrio l' -> TFailurePrio (merge_ins to_do l')
+		  (TSuccessPrio _) as result -> result
+		| TFailurePrio (l',failure_reasons) -> TFailurePrio (merge_ins to_do l',failure_reasons)
 	      end
-          with NoMatch -> 
+          with OneFailure failure_reason -> 
 	    Terms.vcounter := vcounter; (* This transformation failed, forget the variables *)
-	    try_with_restr_list apply_equiv l
+	    if (b == []) then
+	      let names = List.map fst (!names_to_discharge) in
+	      match try_with_restr_list apply_equiv l with
+		(TSuccessPrio _) as result -> result
+	      | TFailurePrio (l',failure_reasons) -> TFailurePrio (l', (names, failure_reason)::failure_reasons)
+	    else
+	      (* When b != [], 
+		 we do not register the reason why the transformation failed. 
+		 It is likely that it is just because the tried name b
+		 has no relation with the tried crypto transformation.
+		 I would like to give an explanation a bit more often,
+		 but it is difficult to give it for reasonable names b. *)
+	      try_with_restr_list apply_equiv l
         end
 
 
@@ -3880,7 +3883,7 @@ let try_with_restr_list (((_, lm, _, _, _, _),_) as apply_equiv) restr =
       (* Try with at least one name *)
       if !stop_mode then
 	(* In stop_mode, cannot add names, so fail *)
-	TFailurePrio []
+	TFailurePrio ([], [[],NameNeededInStopMode])
       else
 	try_with_restr_list apply_equiv (List.map (fun b -> [b, ref DontKnow]) restr)
     end
@@ -3931,11 +3934,11 @@ let crypto_transform stop no_advice (((_,lm,_,_,_,opt2),_) as apply_equiv) names
 	  let (ev_proba, ev_q) = events_proba_queries (!introduced_events) in
 	  g'.current_queries <- ev_q @ g'.current_queries;
 	  TSuccess(prob @ ev_proba, ins, g')
-      |	TFailurePrio l -> 
+      |	TFailurePrio (l,failure_reasons) -> 
 	  if ((!Settings.debug_cryptotransf) > 0) && (l != []) then 
 	    print_string "Advice given\n";
 	  Terms.vcounter := vcounter; (* Forget created variables when the transformation fails *)
-	  TFailure (List.map (fun (l,p,n) -> (apply_equiv, List.map fst n, l)) l)
+	  TFailure (List.map (fun (l,p,n) -> (apply_equiv, List.map fst n, l)) l, failure_reasons)
     end
   else
     begin
@@ -3960,21 +3963,16 @@ let crypto_transform stop no_advice (((_,lm,_,_,_,opt2),_) as apply_equiv) names
 		TSuccess ((compute_proba apply_equiv) @ ev_proba @ proba', ins @ [DCryptoTransf(apply_equiv, List.map fst discharge_names)], g')
 	      end
 	    else
-	      begin
-		if (!Settings.debug_cryptotransf) > 0 then
-		  print_string "The transformation did not use the useful_change oracles, or oracles deemed useful by default.\n";
-		Terms.vcounter := vcounter; (* Forget created variables when the transformation fails *)
-		TFailure []
-	      end
+	      fail NoUsefulChange
 	  end
         else
 	  begin
 	    if (!Settings.debug_cryptotransf) > 0 then 
 	      print_string "Advice given\n";
 	    Terms.vcounter := vcounter; (* Forget created variables when the transformation fails *)
-            TFailure (List.map (fun (l,p,n) -> (apply_equiv, List.map fst n, l)) to_do)
+            TFailure (List.map (fun (l,p,n) -> (apply_equiv, List.map fst n, l)) to_do, [])
 	  end
-      with NoMatch -> 
+      with OneFailure failure_reason -> 
 	Terms.vcounter := vcounter; (* Forget created variables when the transformation fails *)
-	TFailure []
+	TFailure ([], [List.map fst (!names_to_discharge), failure_reason])
     end

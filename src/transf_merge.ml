@@ -4,7 +4,7 @@
  *                                                           *
  *       Bruno Blanchet and David Cadé                       *
  *                                                           *
- *       Copyright (C) ENS, CNRS, INRIA, 2005-2014           *
+ *       Copyright (C) ENS, CNRS, INRIA, 2005-2015           *
  *                                                           *
  *************************************************************)
 
@@ -883,18 +883,29 @@ and simplif_add_list simp_facts = function
    merging of arrays so that diff_var_list becomes empty on the next try.
 *)
 
+(* Exception CannotFormAdvice is raised when the variable pairs
+   stored in cur_branch_var_list do not have the same variables
+   in the same order in the second component (corresponding to the "else" branch)
+   in all branches that we want to merge. This means that the merging
+   we should do is not the same for all branches. This is not handled
+   by MergeArrays, so we simply give up and do not give advice. *)
+
+exception CannotFormAdvice
+
 let rec form_advise all_branches =
   let first_branch = List.hd all_branches in
   List.iter (fun bl ->
     if List.length bl != List.length first_branch then
-      Parsing_helper.internal_error "All branches should have the same number of variables to merge") all_branches;
+      raise CannotFormAdvice
+      (*Parsing_helper.internal_error "All branches should have the same number of variables to merge"*)) all_branches;
   match first_branch with
     [] -> []
   | (_,b0)::_ ->
       let first_vars = List.map List.hd all_branches in
       List.iter (fun (_,b0') ->
 	if b0 != b0' then
-	  Parsing_helper.internal_error "The variables should be in the same order in all branches") first_vars;
+	  raise CannotFormAdvice
+	  (*Parsing_helper.internal_error "The variables should be in the same order in all branches"*)) first_vars;
       let first_elem = (b0, Parsing_helper.dummy_ext) :: 
 	(List.map (fun (b,_) -> (b, Parsing_helper.dummy_ext)) first_vars) 
       in
@@ -928,7 +939,12 @@ let store_arrays_to_normal f =
 	 modify the process afterwards, so that the term/process references might no longer
 	 be correct. I should use mode MCreateBranchVarAtTerm/AtProc in the specialized
 	 MergeBranches transformation. *)
-      Settings.advise := Terms.add_eq (MergeArrays(List.rev (form_advise (!all_branches_var_list)), MCreateBranchVar)) (!Settings.advise);
+      begin
+	try
+	  Settings.advise := Terms.add_eq (MergeArrays(List.rev (form_advise (!all_branches_var_list)), MCreateBranchVar)) (!Settings.advise);
+	with CannotFormAdvice ->
+	  ()
+      end;
       var_no_array_ref := [];
       all_branches_var_list := [];
       Terms.cleanup_exclude_array_ref();
@@ -1547,8 +1563,9 @@ let is_def_before (b1,_) (b,_) =
   | _ -> Parsing_helper.internal_error "Variable should have exactly one definition in Mergebranches.is_def_before"
 
 let check_distinct_branch (b,ext) (b', ext') =
-  if (Binderset.mem b'.compatible b) || 
-     (Binderset.mem b.compatible b') then
+  try 
+    ignore (Terms.incompatible_suffix_length b b')
+  with Not_found -> 
     raise(Error("For merging arrays, variable " ^
 		(Display.binder_to_string b) ^ 
 		" should not be defined for the same indices as " ^ 
@@ -1750,7 +1767,10 @@ let add_advice (merge_type, cur_array, all_branches_var_list, _, _) =
      less often, but when MergeArrays succeeds, it has really simplified the game.
   *)
   if not (List.for_all (fun l -> l == []) all_branches_var_list) then
-    Settings.advise := Terms.add_eq (MergeArrays(List.rev (form_advise all_branches_var_list), MNoBranchVar)) (!Settings.advise)
+    try 
+      Settings.advise := Terms.add_eq (MergeArrays(List.rev (form_advise all_branches_var_list), MNoBranchVar)) (!Settings.advise)
+    with CannotFormAdvice -> 
+      ()
 
 
 (* First step *) 

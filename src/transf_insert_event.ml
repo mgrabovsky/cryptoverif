@@ -4,7 +4,7 @@
  *                                                           *
  *       Bruno Blanchet and David Cadé                       *
  *                                                           *
- *       Copyright (C) ENS, CNRS, INRIA, 2005-2014           *
+ *       Copyright (C) ENS, CNRS, INRIA, 2005-2015           *
  *                                                           *
  *************************************************************)
 
@@ -49,8 +49,7 @@ open Types
 (***** Manual insertion of abort event *****)
 
 let rec replace_process count occ premp p =
-  { i_desc = 
-    begin
+  Terms.iproc_from_desc3 p (
   match p.i_desc with
     Nil -> Nil
   | Par(p1,p2) -> 
@@ -59,10 +58,7 @@ let rec replace_process count occ premp p =
   | Repl(b,p) ->
       Repl(b, replace_process count occ premp p)
   | Input(c, pat, p) ->
-      Input(c, pat, replace_oprocess count occ premp p)
-    end;
-    i_occ = p.i_occ;
-    i_facts = None }
+      Input(c, pat, replace_oprocess count occ premp p))
 
 and replace_oprocess count occ premp p =
   if p.p_occ == occ then
@@ -71,8 +67,7 @@ and replace_oprocess count occ premp p =
       premp
     end
   else
-    { p_desc = 
-      begin
+    Terms.oproc_from_desc3 p (
     match p.p_desc with
       Yield -> Yield
     | EventAbort f -> EventAbort f
@@ -91,10 +86,7 @@ and replace_oprocess count occ premp p =
 	    replace_oprocess count occ premp p2)
     | EventP(t,p) ->
 	EventP(t,replace_oprocess count occ premp p)
-    | Get _|Insert _ -> Parsing_helper.internal_error "Get/Insert should not appear here"
-      end;
-      p_occ = p.p_occ;
-      p_facts = None  }
+    | Get _|Insert _ -> Parsing_helper.internal_error "Get/Insert should not appear here")
 
 let insert_event occ s g =
   let f = { f_name = s;

@@ -4,7 +4,7 @@
  *                                                           *
  *       Bruno Blanchet and David Cadé                       *
  *                                                           *
- *       Copyright (C) ENS, CNRS, INRIA, 2005-2014           *
+ *       Copyright (C) ENS, CNRS, INRIA, 2005-2015           *
  *                                                           *
  *************************************************************)
 
@@ -118,12 +118,16 @@ val binderref_from_binder : binder -> binderref
 val term_from_repl_index : repl_index -> term
 val build_term : term -> term_desc -> term
 val build_term2 : term -> term_desc -> term
+val build_term3 : term -> term_desc -> term
 val build_term_type : typet -> term_desc -> term
-
+val new_term : typet -> Parsing_helper.extent -> term_desc -> term
+    
 val iproc_from_desc : inputprocess_desc -> inputprocess
 val oproc_from_desc : process_desc -> process
 val iproc_from_desc2 : inputprocess -> inputprocess_desc -> inputprocess
 val oproc_from_desc2 : process -> process_desc -> process
+val iproc_from_desc3 : inputprocess -> inputprocess_desc -> inputprocess
+val oproc_from_desc3 : process -> process_desc -> process
 
 val app : funsymb -> term list -> term
 
@@ -325,8 +329,9 @@ val inter_binderref : binderref list -> binderref list -> binderref list
 val union_binderref : binderref list -> binderref list -> binderref list
 
 val get_deflist_subterms : binderref list ref -> term -> unit
-val get_deflist_process : binderref list ref -> inputprocess -> unit
-val get_deflist_oprocess : binderref list ref -> process -> unit
+
+val get_needed_deflist_term : binderref list -> binderref list ref -> term -> unit
+val get_needed_deflist_oprocess : binderref list -> binderref list ref -> process -> unit
 
 val refers_to : binder -> term -> bool
 val refers_to_br : binder -> binderref -> bool
@@ -430,17 +435,39 @@ val has_array_ref_non_exclude : binder -> bool
 
 val unionq : 'a list -> 'a list -> 'a list (* union using physical equality *)
 
-val compatible_empty : binderset
+val map_empty : int Occ_map.occ_map
 val empty_comp_process : inputprocess -> unit
 (* [build_def_process] must be called before [build_compatible_defs] *)
 val build_compatible_defs : inputprocess -> unit
+
+(* [incompatible_suffix_length b b'] returns a length [l] such that if
+   [b[args]] and [b'[args']] are both defined, then the suffixes of
+   length [l] of [args] and [args'] must be different.
+   Raises [Not_found] when [b[args]] and [b'[args']] can be defined 
+   for any [args,args']. *)
+val incompatible_suffix_length : binder -> binder -> int
 (* [is_compatible (b,args) (b',args')] returns true when
    [b[args]] and [b'[args']] may both be defined *)
 val is_compatible : binderref -> binderref -> bool
+(* [is_compatible_node (b,args) n (b',args')] returns true when
+   [b[args]] and [b'[args']] may both be defined, with [b[args]]
+   defined at node [n]. *)
+val is_compatible_node : binderref -> def_node -> binderref -> bool
 (* [both_def_add_fact fact_accu (b,args) (b',args')]
    adds to [fact_accu] a fact that always holds when
    [b[args]] and [b'[args']] are both defined. *)
 val both_def_add_fact : term list ref -> binderref -> binderref -> unit
+(* [def_at_pp_add_fact fact_accu pp args (b',args')] adds to
+   [fact_accu] a fact that always holds when [b'[args']] is defined
+   before the execution of program point [pp] with indices [args], if
+   any. *)
+val def_at_pp_add_fact : term list ref -> program_point -> term list -> binderref -> unit
+(* [both_pp_add_fact fact_accu (lidxa, ppa) (lidxb, ppb)]
+   adds to [fact_accu] a fact inferred from the execution of both
+   program point [ppa] with indices [lidxa] and 
+   program point [ppb] with indices [lidxb], if any. *)
+val both_pp_add_fact : term list ref ->
+  term list * program_point -> term list * program_point -> unit
 (* [may_def_before (b,args) (b',args')] returns true when
    [b[args]] may be defined before [b'[args']] *)
 val may_def_before : binderref -> binderref -> bool

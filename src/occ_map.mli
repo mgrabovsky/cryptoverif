@@ -44,10 +44,18 @@ The fact that you are presently reading this means that you have had
 knowledge of the CeCILL-B license and that you accept its terms.
 
 *)
-open Types
+(* Maps from occurrences to 'a *)
 
-type trans_res =
-    CSuccess of state
-  | CFailure of (equiv_nm * binder list * instruct list) list
+type 'a occ_map
 
-val execute_any_crypto : Ptree.ident list list option -> state -> trans_res
+val empty : 'a occ_map
+
+(* [map_add map min_occ max_occ image] returns a map that
+   maps all occurrences from [min_occ] to [max_occ] to [image],
+   and all other occurrences like [map] *)
+
+val add : 'a occ_map -> int -> int -> 'a -> 'a occ_map
+
+(* [map_find occ map] returns the image of [occ] by [map] *)
+
+val find : int -> 'a occ_map -> 'a

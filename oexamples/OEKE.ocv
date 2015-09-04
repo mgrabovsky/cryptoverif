@@ -4,7 +4,7 @@
  *                                                           *
  *       Bruno Blanchet and David Cadé                       *
  *                                                           *
- *       Copyright (C) ENS, CNRS, INRIA, 2005-2014           *
+ *       Copyright (C) ENS, CNRS, INRIA, 2005-2015           *
  *                                                           *
  *************************************************************)
 
@@ -69,19 +69,19 @@ crypto rom(h0);
 SArename Y_u;
 auto;
 show_game;
-move array "@7_X_734"; (* variable chosen at the end of OC2 and not used immediately *)
+move array "@7_X_731"; (* variable chosen at the end of OC2 and not used immediately *)
 move binder "@12_r_179";
-merge_arrays "@7_X_730" "@2_Y_737";
+merge_arrays "@7_X_727" "@2_Y_734";
 merge_branches;
-move array "@7_X_731"; (* variable chosen in OP and not used immediately *)
+move array "@7_X_728"; (* variable chosen in OP and not used immediately *)
 (*show_game;
-merge_arrays "@7_X_730" "@2_Y_749";
+merge_arrays "@7_X_727" "@2_Y_746";
 merge_branches;*)
-move array "@7_X_733"; (* variable chosen in OS1 and not used immediately *)
+move array "@7_X_730"; (* variable chosen in OS1 and not used immediately *)
 (*show_game;
-merge_arrays "@7_X_730" "@2_Y_762";*)
+merge_arrays "@7_X_727" "@2_Y_759";*)
 show_game occ;
-insert 110 "find jh' <= qH1, jd <= qD suchthat defined(x1[jh'], x2[jh'], x3[jh'], x4[jh'], @12_r_185[jh'], m[jd], kd[jd], @7_X_730[jd]) && (m[jd] = @9_re_234) && (U = x1[jh']) && (S = x2[jh']) && (X_s = x3[jh']) && (x4[jh'] = @7_X_730[jd]) && (auth_s = @12_r_185[jh'])  && (kd[jd] = pw) then";
+insert 110 "find jh' <= qH1, jd <= qD suchthat defined(x1[jh'], x2[jh'], x3[jh'], x4[jh'], @12_r_185[jh'], m[jd], kd[jd], @7_X_727[jd]) && (m[jd] = @9_re_234) && (U = x1[jh']) && (S = x2[jh']) && (X_s = x3[jh']) && (x4[jh'] = @7_X_727[jd]) && (auth_s = @12_r_185[jh'])  && (kd[jd] = pw) then";
 show_game occ;
 insert_event Auth2 157;
 simplify;

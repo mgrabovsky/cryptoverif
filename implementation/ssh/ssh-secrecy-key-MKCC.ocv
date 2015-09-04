@@ -4,7 +4,7 @@
  *                                                           *
  *       Bruno Blanchet and David Cadé                       *
  *                                                           *
- *       Copyright (C) ENS, CNRS, INRIA, 2005-2014           *
+ *       Copyright (C) ENS, CNRS, INRIA, 2005-2015           *
  *                                                           *
  *************************************************************)
 
@@ -300,3 +300,8 @@ process
         insert trusted_hosts(pkS);
         return (pkS)};
         ((foreach iA <= N do processS) | (foreach iB <= N do processC) | processH)
+
+(* EXPECTED
+All queries proved.
+0.556s (user 0.532s + system 0.024s), max rss 101648K
+END *)

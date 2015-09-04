@@ -4,7 +4,7 @@
  *                                                           *
  *       Bruno Blanchet and David Cadé                       *
  *                                                           *
- *       Copyright (C) ENS, CNRS, INRIA, 2005-2014           *
+ *       Copyright (C) ENS, CNRS, INRIA, 2005-2015           *
  *                                                           *
  *************************************************************)
 
@@ -144,7 +144,7 @@ let execute g ins =
   (g', proba, done_ins, compos_sa_rename done_ins)
 
 
-let execute_state state i =
+let execute_state_basic state i =
   let tmp_changed = !Settings.changed in
   Settings.changed := false;
   print_string "Doing ";
@@ -179,15 +179,15 @@ let execute_state state i =
       (state, None)
     end
       
-let execute_state state = function
+let rec execute_state state = function
     SArenaming b ->
       (* Adding simplification after SArenaming *)
       let tmp_changed = !Settings.changed in
       Settings.changed := false;
-      let (state', ins_updater) = execute_state state (SArenaming b) in
+      let (state', ins_updater) = execute_state_basic state (SArenaming b) in
       if !Settings.changed then 
 	if !Settings.simplify_after_sarename then 
-	  let (state'', ins_updater') = execute_state state' (RemoveAssign Minimal) in
+	  let (state'', ins_updater') = execute_state_basic state' (RemoveAssign Minimal) in
 	  let (state''', ins_updater'') = execute_state state'' (Simplify []) in
 	  (state''', compos_ins_updater (compos_ins_updater ins_updater ins_updater') ins_updater'')
 	else
@@ -197,7 +197,75 @@ let execute_state state = function
 	  Settings.changed := tmp_changed;
 	  (state', ins_updater)
 	end
-  | i -> execute_state state i
+  | (Simplify l) as i ->
+      (* Iterate Simplify (!Settings.max_iter_simplif) times *)
+      let tmp_changed = !Settings.changed in
+      Settings.changed := false;
+      print_string "Doing ";
+      Display.display_instruct i;
+      print_string "... "; flush stdout;
+      let rec iterate iter state =
+	let (g', proba, done_ins, ins_updater) = execute state.game i in
+	if !Settings.debug_instruct then
+	  begin
+	    print_string " Resulting game after one simplification pass:\n";
+	    Display.display_process g'.proc
+	  end;
+	match done_ins with
+	  [] ->
+	    (* No change in this pass *)
+	    print_string "Run simplify ";
+            print_int ((!Settings.max_iter_simplif) - iter + 1);
+	    print_string " time(s). Fixpoint reached.\n";
+	    (state, None)
+	| [DGlobalDepAnal _] ->
+	    (* Global dependency analysis done; iterate simplification the same number of times *)
+	    g'.proc <- Terms.move_occ_process g'.proc;
+	    Invariants.global_inv g'.proc;
+	    let state' =  
+	      { game = g';
+		prev_state = Some (i, proba, done_ins, state) }
+	    in
+	    let (state'', ins_updater') = iterate iter state' in
+	    (state'', compos_ins_updater ins_updater ins_updater')
+	| _ ->
+	    (* Simplification done *)
+	    g'.proc <- Terms.move_occ_process g'.proc;
+	    Invariants.global_inv g'.proc;
+	    let state' =  
+	      { game = g';
+		prev_state = Some (i, proba, done_ins, state) }
+	    in
+	    if iter != 1 then
+	      let (state'', ins_updater') = iterate (iter-1) state' in
+	      (state'', compos_ins_updater ins_updater ins_updater')
+	    else
+	      begin
+		print_string "Run simplify ";
+		print_int ((!Settings.max_iter_simplif) - iter + 1);
+		print_string " time(s). Maximum reached.\n";
+		(state', ins_updater)
+              end
+      in
+      let result = iterate (!Settings.max_iter_simplif) state in
+      (* Transfer the local advice of Globaldepanal to the global advice in Settings.advise *)
+      List.iter (fun x -> Settings.advise := Terms.add_eq x (!Settings.advise)) (!Transf_globaldepanal.advise);
+      Transf_globaldepanal.advise := [];
+
+      if !Settings.changed then
+	begin
+	  print_string "Done.";
+	  print_newline();
+	  result
+	end
+      else
+	begin
+	  print_string "No change.";
+	  print_newline();
+	  Settings.changed := tmp_changed;
+	  (state, None)
+	end
+  | i -> execute_state_basic state i
 
 let rec execute_with_advise state i = 
   let tmp_changed0 = !Settings.changed in
@@ -286,6 +354,21 @@ let simplify state = merge (execute_with_advise_last (move_new_let (execute_with
 
 let expand_simplify state = simplify (execute_with_advise_last state ExpandIfFindGetInsert)
 
+let display_failure_reasons failure_reasons =
+  if failure_reasons == [] then
+    print_string ".\n"
+  else
+    print_string ":\n";
+  List.iter (fun (bl, failure_reason) ->
+    if bl != [] then
+      begin
+	print_string "Random variables: ";
+	Display.display_list Display.display_binder bl;
+	print_newline()
+      end;
+    Transf_crypto.display_failure_reason failure_reason
+      ) failure_reasons
+
 let crypto_transform stop no_advice equiv bl_assoc state =
   print_string "Trying "; Display.display_instruct (CryptoTransf(equiv, bl_assoc)); print_string "... ";
   let res = Transf_crypto.crypto_transform stop no_advice equiv bl_assoc state.game in
@@ -311,7 +394,7 @@ let crypto_transform stop no_advice equiv bl_assoc state =
       Invariants.global_inv g''.proc;
       CSuccess (simplify { game = g''; 
 			   prev_state = Some (CryptoTransf(equiv, bl_assoc), proba, ins, state) })
-  | TFailure l ->
+  | TFailure (l,failure_reasons) ->
       if !Settings.debug_instruct then
 	begin
 	  Display.display_process state.game.proc;
@@ -322,7 +405,8 @@ let crypto_transform stop no_advice equiv bl_assoc state =
 	      print_string "with ";
 	      Display.display_bl_assoc bl_assoc
 	    end;
-	  print_string " failed.\n";
+	  print_string " failed";
+	  display_failure_reasons failure_reasons;
 	  if l != [] then print_string "Suggestions: \n";
 	  List.iter (fun (_, bl_assoc, to_do) ->
 	    Display.display_bl_assoc bl_assoc;
@@ -332,7 +416,10 @@ let crypto_transform stop no_advice equiv bl_assoc state =
 	      ) l
 	end
       else
-	print_string "Failed.\n";
+	begin
+	  print_string "Failed";
+	  display_failure_reasons failure_reasons
+	end;
       CFailure l
 
 let rec execute_crypto_list continue = function

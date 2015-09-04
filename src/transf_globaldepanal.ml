@@ -4,7 +4,7 @@
  *                                                           *
  *       Bruno Blanchet and David Cadé                       *
  *                                                           *
- *       Copyright (C) ENS, CNRS, INRIA, 2005-2014           *
+ *       Copyright (C) ENS, CNRS, INRIA, 2005-2015           *
  *                                                           *
  *************************************************************)
 
@@ -105,6 +105,11 @@ let vars_charac_type = ref []
 (* The flag [local_changed] is set when the dependency analysis
    managed to simplify the game *)
 let local_changed = ref false
+
+(* The flag [defined_condition_update_needed] is set when the dependency analysis
+   modified a term is such a way that a defined condition
+   of a previous find may need to be updated. *)
+let defined_condition_update_needed = ref false
 
 (* Advised instructions *)
 let advise = ref []
@@ -655,6 +660,10 @@ let rec find_facts = function
   | t::l ->
       if t.t_facts == None then find_facts l else t.t_facts
 
+let find_map = function
+    [] -> Terms.map_empty
+  | t::_ -> t.t_incompatible
+
 let rec convert_to_term = function
     PatVar _ -> raise Not_found
   | PatTuple(f,l) ->
@@ -662,7 +671,9 @@ let rec convert_to_term = function
       { t_desc = FunApp(f,l');
 	t_type = snd f.f_type;
 	t_occ = Terms.new_occ(); 
+	t_max_occ = 0;
 	t_loc = Parsing_helper.dummy_ext;
+	t_incompatible = find_map l';
 	t_facts = find_facts l' }
   | PatEqual t -> t
 
@@ -922,6 +933,8 @@ and check_depend_oprocess cur_array p =
 	match almost_indep_test cur_array t with
 	  BothDepB -> raise BadDep
 	| BothIndepB t' -> 
+	    if not (Terms.equal_terms t t') then
+	      defined_condition_update_needed := true;
 	    let p1' = check_depend_oprocess cur_array p1 in
 	    let p2' = check_depend_oprocess cur_array p2 in
 	    Terms.oproc_from_desc (Test(t', p1',p2'))
@@ -958,20 +971,46 @@ and check_depend_oprocess cur_array p =
 	    | OnlyThen ->
 		List.iter (fun (b,_) -> add_defined b) bl;
 		if def_list == [] then always_then := true;
-		l0' := (bl, def_list, t, check_depend_oprocess cur_array p1) :: (!l0')
+		let defined_condition_update_needed_tmp = !defined_condition_update_needed in
+		defined_condition_update_needed := false;
+		let p1' = check_depend_oprocess cur_array p1 in
+		let def_list' = 
+		  if !defined_condition_update_needed then
+		    let already_defined = Facts.get_def_vars_at p.p_facts in
+		    let newly_defined = Facts.def_vars_from_defined (Facts.get_node p.p_facts) def_list in
+		    Facts.update_def_list_process already_defined newly_defined bl def_list t p1'
+		  else
+		    def_list
+		in
+		defined_condition_update_needed := 
+		   defined_condition_update_needed_tmp || (!defined_condition_update_needed);
+		l0' := (bl, def_list', t, p1') :: (!l0')
 	    | BothIndepB t' ->
 		List.iter (fun (b,_) -> add_defined b) bl;
-		l0' := (bl, def_list, t', check_depend_oprocess cur_array p1) :: (!l0')
+		let defined_condition_update_needed_tmp = !defined_condition_update_needed in
+		defined_condition_update_needed := not (Terms.equal_terms t t');
+		let p1' = check_depend_oprocess cur_array p1 in
+		let def_list' = 
+		  if !defined_condition_update_needed then
+		    let already_defined = Facts.get_def_vars_at p.p_facts in
+		    let newly_defined = Facts.def_vars_from_defined (Facts.get_node p.p_facts) def_list in
+		    Facts.update_def_list_process already_defined newly_defined bl def_list t' p1'
+		  else
+		    def_list
+		in
+		defined_condition_update_needed := 
+		   defined_condition_update_needed_tmp || (!defined_condition_update_needed);
+		l0' := (bl, def_list', t', p1') :: (!l0')
 	    | OnlyElse -> 
 		local_changed := true
 	  end) l0;
       if !always_then then
 	begin
 	  local_changed := true;
-	  Terms.oproc_from_desc (Find(!l0', Terms.oproc_from_desc Yield, find_info))
+	  Terms.oproc_from_desc (Find(List.rev (!l0'), Terms.oproc_from_desc Yield, find_info))
 	end
       else
-	Terms.oproc_from_desc (Find(!l0', check_depend_oprocess cur_array p2, find_info))
+	Terms.oproc_from_desc (Find(List.rev (!l0'), check_depend_oprocess cur_array p2, find_info))
   | Output((c,tl),t2,p) ->
       List.iter (fun t ->
 	if depends t then
@@ -1114,6 +1153,7 @@ let rec check_depend_iter ((old_proba, old_term_collisions) as init_proba_state)
   local_changed := false;
   dvar_list_changed := false;
   defvar_list_changed := false;
+  defined_condition_update_needed := false;
   let proc' = check_depend_process [] (!whole_game).proc in
   if (!dvar_list_changed) || (!defvar_list_changed) then check_depend_iter init_proba_state else proc'
 

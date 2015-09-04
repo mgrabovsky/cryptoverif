@@ -4,7 +4,7 @@
  *                                                           *
  *       Bruno Blanchet and David Cadé                       *
  *                                                           *
- *       Copyright (C) ENS, CNRS, INRIA, 2005-2014           *
+ *       Copyright (C) ENS, CNRS, INRIA, 2005-2015           *
  *                                                           *
  *************************************************************)
 
@@ -413,6 +413,7 @@ let sa_rename b0 g =
     if List.length (!image_name_list) >= 2 then
       begin
 	Settings.changed := true;
+	let p' = Terms.move_occ_process p' in 
 	Terms.build_def_process None p';
 	Terms.build_compatible_defs p';
 	let p'' = ren_out_process b0 p' in

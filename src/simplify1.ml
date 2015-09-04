@@ -4,7 +4,7 @@
  *                                                           *
  *       Bruno Blanchet and David Cadé                       *
  *                                                           *
- *       Copyright (C) ENS, CNRS, INRIA, 2005-2014           *
+ *       Copyright (C) ENS, CNRS, INRIA, 2005-2015           *
  *                                                           *
  *************************************************************)
 
@@ -90,8 +90,8 @@ let any_term_binder t =
 		   true_facts_at_def = [];
 		   def_vars_at_def = [];
 		   elsefind_facts_at_def = [];
-		   future_binders = []; future_true_facts = []; n_compatible = Terms.compatible_empty;
-		   definition = DNone }
+		   future_binders = []; future_true_facts = []; 
+		   definition = DNone; definition_success = DNone }
   in
   b'.def <- [node];
   b'

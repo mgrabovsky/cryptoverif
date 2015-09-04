@@ -4,7 +4,7 @@
  *                                                           *
  *       Bruno Blanchet and David Cadé                       *
  *                                                           *
- *       Copyright (C) ENS, CNRS, INRIA, 2005-2014           *
+ *       Copyright (C) ENS, CNRS, INRIA, 2005-2015           *
  *                                                           *
  *************************************************************)
 
@@ -186,6 +186,37 @@ val remove_subterms : binderref list -> binderref list -> binderref list
 (* [eq_deflists dl dl'] returns true when the two def_list [dl]
    and [dl'] are equal (by checking mutual inclusion) *)
 val eq_deflists : binderref list -> binderref list -> bool
+
+(* [update_def_list_term already_defined newly_defined bl def_list tc' p'] returns an updated [def_list]
+   after modifying a branch of find (when the find is a term). 
+   [already_defined] is a list of variables already known to be defined
+   above the find.
+   [newly_defined] is the set of variables whose definition is guaranteed
+   by the old defined condition [def_list]; it is used only for a sanity check.
+   [bl, def_list, tc', p'] describe the modified branch of find:
+   [bl] contains the indices of find
+   [def_list] is the old def_list
+   [tc'] is the modified condition of the find
+   [p'] is the modified then branch of the find. *) 
+val update_def_list_term : binderref list -> binderref list -> 
+  (binder * repl_index) list -> binderref list -> term -> term ->
+    binderref list
+
+(* [update_def_list_process already_defined newly_defined bl def_list t' p1'] 
+   returns an updated [def_list]
+   after modifying a branch of find (when the find is a process). 
+   [already_defined] is a list of variables already known to be defined
+   above the find.
+   [newly_defined] is the set of variables whose definition is guaranteed
+   by the old defined condition [def_list]; it is used only for a sanity check.
+   [bl, def_list, t', p1'] describe the modified branch of find:
+   [bl] contains the indices of find
+   [def_list] is the old def_list
+   [t'] is the modified condition of the find
+   [p1'] is the modified then branch of the find. *) 
+val update_def_list_process : binderref list -> binderref list -> 
+  (binder * repl_index) list -> binderref list -> term -> process ->
+    binderref list
 
 (* 3. Some rich functions that rely on collecting facts and reasoning 
    about them *)

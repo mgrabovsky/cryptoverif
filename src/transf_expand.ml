@@ -4,7 +4,7 @@
  *                                                           *
  *       Bruno Blanchet and David Cadé                       *
  *                                                           *
- *       Copyright (C) ENS, CNRS, INRIA, 2005-2014           *
+ *       Copyright (C) ENS, CNRS, INRIA, 2005-2015           *
  *                                                           *
  *************************************************************)
 
@@ -137,6 +137,12 @@ let rec simplify_cterm t =
   | FindE(l0,t3, find_info) -> 
       (* Remove useless branches if possible *)
       let l0 = filter_find t l0 in
+      if l0 == [] then  
+	begin
+	  current_pass_transfos := (SFindERemoved(t)) :: (!current_pass_transfos);
+	  simplify_cterm t3
+	end
+      else
       let l0' = List.map (fun (bl,def_list,t1,t2) ->
 	let t1' = simplify_cterm t1 in
 	let t2' = simplify_cterm t2 in

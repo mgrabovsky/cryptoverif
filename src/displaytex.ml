@@ -4,7 +4,7 @@
  *                                                           *
  *       Bruno Blanchet and David Cadé                       *
  *                                                           *
- *       Copyright (C) ENS, CNRS, INRIA, 2005-2014           *
+ *       Copyright (C) ENS, CNRS, INRIA, 2005-2015           *
  *                                                           *
  *************************************************************)
 
@@ -91,6 +91,12 @@ let rec display_list f = function
   | [a] -> f a
   | (a::l) -> f a; print_string ", ";
       display_list f l
+
+let rec display_list_break f = function
+    [] -> ()
+  | [a] -> f a
+  | (a::l) -> f a; print_string ", \\allowbreak ";
+      display_list_break f l
 
 let rec remove_common_prefix l1 l2 = match (l1,l2) with
   ({t_desc = ReplIndex ri1}::l1',ri2::l2') when ri1 == ri2 -> 
@@ -382,7 +388,7 @@ let rec display_proba level = function
       if l != [] then
 	begin
 	  print_string "(";
-	  display_list (display_proba 0) l;
+	  display_list_break (display_proba 0) l;
 	  print_string ")"
 	end
   | Count p -> print_id "\\kwp{" p.pname "}"
@@ -401,7 +407,7 @@ let rec display_proba level = function
       if level > 1 then print_string ")"
   | Max(l) -> 
       print_string "\\kw{max}(";
-      display_list (display_proba 0) l;
+      display_list_break (display_proba 0) l;
       print_string ")"
   | Mul(x,y) ->
       if level > 3 then print_string "(";
@@ -435,7 +441,7 @@ let rec display_proba level = function
       if pl != [] then
 	begin
 	  print_string ", ";
-	  display_list (display_proba 0) pl
+	  display_list_break (display_proba 0) pl
 	end;
       print_string ")"
   | Maxlength(g,t) ->
@@ -466,8 +472,8 @@ let rec display_proba level = function
       end;
       if pl != [] then
 	begin
-	  print_string ", ";
-	  display_list (display_proba 0) pl
+	  print_string ", \\allowbreak ";
+	  display_list_break (display_proba 0) pl
 	end;
       print_string ")"
 
@@ -924,6 +930,7 @@ and display_oprocess indent p =
 	else
 	  display_oprocess_paren indent p1
 	  ) l0;
+      if l0 == [] then print_string "$\\\\\n";
       if p2.p_desc != Yield then
 	begin
 	  occ_space();
@@ -1801,9 +1808,11 @@ let display_state s =
   let states_needed_in_queries = Display.get_all_states_from_queries initial_queries in
   let states_to_display = Display.remove_duplicate_states [] (s::states_needed_in_queries) in
   (* Set a tab stop after the occurrence display *)
+  print_string "\\begin{tabbing}\n";
   print_string (String.make (Display.len_num (!Terms.max_occ) + 2) '0');
   print_string "\\=\\kill\n";
   List.iter (fun s -> display_state [] s) states_to_display;  
+  print_string "\\end{tabbing}\n";
 
   (* Display the probabilities of proved queries *)
   List.iter (fun (q,poptref,_) ->
@@ -1853,7 +1862,6 @@ let preamble = "
 \\newcommand{\\kwp}[1]{\\mathit{#1}}
 \\newcommand{\\kwc}[1]{\\mathit{#1}}
 \\begin{document}
-\\begin{tabbing}
 "
 
 let nice_tex_preamble = "
@@ -1868,7 +1876,6 @@ let nice_tex_preamble = "
 \\newcommand{\\kwp}[1]{\\mathit{#1}}
 \\newcommand{\\kwc}[1]{\\mathit{#1}}
 \\begin{document}
-\\begin{tabbing}
 "
 
 let oracles_preamble = "
@@ -1883,11 +1890,9 @@ let oracles_preamble = "
 \\newcommand{\\kwp}[1]{\\mathit{#1}}
 \\newcommand{\\kwc}[1]{\\mathit{#1}}
 \\begin{document}
-\\begin{tabbing}
 "
 
 let postamble = "
-\\end{tabbing}
 \\end{document}
 "
 
