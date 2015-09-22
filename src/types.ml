@@ -654,10 +654,12 @@ type dep_anal = simp_facts -> term -> term -> term option
 exception NoMatch
 exception Contradiction
 
-(* For the generation of implementations
-   type for a program : name, options, process *)
-
+(* For the generation of implementations *)
 type impl_opt = Read of binder * string | Write of binder * string 
 
+(* Type of a program : name, options, process *)
 type impl_process = string * impl_opt list * inputprocess
 
+module type ImplTarget = sig
+    val do_implementation : impl_process list -> unit
+end

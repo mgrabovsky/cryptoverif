@@ -47,28 +47,11 @@ knowledge of the CeCILL-B license and that you accept its terms.
 open Types
 
 let front_end_set = ref false
-let dir_sep = "/" (* Filename.dir_sep exists only in OCaml >= 3.11.2 and 
-		     OCaml MinGW exists only in OCaml 3.11.0... *)
 
 let ends_with s sub =
   let l_s = String.length s in
   let l_sub = String.length sub in
   (l_s >= l_sub) && (String.sub s (l_s - l_sub) l_sub = sub)
-
-
-let do_implementation impl =
-  let impl = 
-    Implementation.impl_check impl
-  in
-    List.iter
-      (fun (x,opt,p)->
-         print_string ("Generating implementation for module "^x^"...\n");
-         let impl=Implementation.impl_translate p opt in
-         let f=open_out ((!Settings.out_dir)^dir_sep^x^".py") in
-           output_string f impl;
-           close_out f;
-           print_string ("Done.\n")
-      ) impl
 
 
 (* Prepare the equation statements given by the user *)
@@ -180,7 +163,7 @@ let anal_file s =
     let equivs = List.map Check.check_equiv equivs in
     let new_new_eq = List.map (fun (ty, eq) -> (ty, Check.check_equiv eq)) move_new_eq in
       if (!Settings.get_implementation) then
-        do_implementation impl
+        Implementation.do_implementation impl
       else
         begin
           let g = { proc = Terms.move_occ_process p; game_number = 1; current_queries = [] } in

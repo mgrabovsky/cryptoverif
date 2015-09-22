@@ -859,4 +859,18 @@ let get_implementation (opt:impl_opt list) (p:inputprocess) =
 let impl_translate (process:inputprocess) (opt:impl_opt list) =
   get_implementation opt process
 
+let do_implementation (impl:impl_process list) =
+  let dir_sep = "/" (* Filename.dir_sep exists only in OCaml >= 3.11.2 and
+		     OCaml MinGW exists only in OCaml 3.11.0... *) in
+  let impl = impl_check impl in
+  List.iter
+    (fun (x,opt,p)->
+        print_string ("Generating implementation for module "^x^"...\n");
+        let impl = impl_translate p opt in
+        let f = open_out ((!Settings.out_dir)^dir_sep^x^".py") in
+          output_string f impl;
+          close_out f;
+          print_string ("Done.\n")
+    ) impl
+
 (* vim: set et ts=8 sw=2 tw=0: *)

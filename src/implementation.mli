@@ -54,3 +54,4 @@ val impl_check : impl_process list -> impl_process list
    of the implementation and interface files*)
 val impl_translate : inputprocess -> impl_opt list -> string
 
+val do_implementation : impl_process list -> unit
