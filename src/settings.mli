@@ -51,6 +51,7 @@ type frontend =
   | Oracles
 
 val get_implementation : bool ref
+val impl_function : (impl_process list -> unit) option ref
 val out_dir : string ref
 
 val front_end : frontend ref

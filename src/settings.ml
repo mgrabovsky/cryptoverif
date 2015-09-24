@@ -52,6 +52,7 @@ type frontend =
   | Oracles
 
 let get_implementation = ref false
+let impl_function      = ref None
 
 let out_dir = ref "."
 

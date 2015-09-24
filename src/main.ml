@@ -162,8 +162,10 @@ let anal_file s =
     Check.check_def_process_main p;
     let equivs = List.map Check.check_equiv equivs in
     let new_new_eq = List.map (fun (ty, eq) -> (ty, Check.check_equiv eq)) move_new_eq in
-      if (!Settings.get_implementation) then
-        Implementation.do_implementation impl
+      if !Settings.get_implementation then
+        match !Settings.implementation_func with
+        | Some f -> f impl
+        | _ -> Parsing_helper.internal_error "Implementation extraction requested but no code generation function specified"
       else
         begin
           let g = { proc = Terms.move_occ_process p; game_number = 1; current_queries = [] } in
@@ -207,7 +209,13 @@ let _ =
 	| "oracles" -> Settings.front_end := Settings.Oracles
 	| _ -> Parsing_helper.user_error "Command-line option -in expects argument either \"channels\" or \"oracles\".\n"),
       "channels / -in oracles \tchoose the front-end";
-      "-impl", Arg.Unit (fun () -> Settings.get_implementation := true),"\tget implementation of defined modules";
+      "-impl", Arg.String (fun s ->
+          Settings.get_implementation := true;
+          match s with
+          | "ocaml"  -> Settings.impl_function := Some Impl_ocaml.do_implementation
+          | "python" -> Settings.impl_function := Some Impl_python.do_implementation
+          | _ -> Parsing_helper.user_error "Unsupported implementation language\n"),
+          "{ocaml,python}\tget implementation of defined modules";
       "-o", Arg.String (fun s -> 
                           try 
                             if (Sys.is_directory s) then Settings.out_dir := s
