@@ -70,12 +70,11 @@ let tuple_or_bare f = function
   | [x] -> f x
   | xs  -> "("^(string_list_sep ", " (List.map f xs))^")"
 
-
-(*returns set of free and set of bound variables
-  get_iprocess_bv returns the set of variables bound not under a replication
-  The set of variables bound under a replication is stored in
-  bound_vars_under_repl.
-  The set of free variables is stored in free_vars. *)
+let get_local_var_name bname iv =
+  if BinderSet.mem bname iv then
+    "self."^bname
+  else
+    bname
 
 (* returns the next oracles. b represents if the oracle is under replication (false) or not (true) *)
 

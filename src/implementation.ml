@@ -47,6 +47,7 @@ knowledge of the CeCILL-B license and that you accept its terms.
 open Types
 
 
+
 module StringMap = Map.Make(String)
 module BinderSet = Set.Make(String)
 
@@ -102,12 +103,6 @@ let get_binderref_name ext (b,l) =
     get_binder_name b
   else
     Parsing_helper.input_error "There should not be any find variable (implementation)" ext
-
-let get_local_var_name bname iv =
-  if BinderSet.mem bname iv then
-    "self."^bname
-  else
-    bname
 
 let free_vars = ref BinderSet.empty (* Contains all free variables; may contain some variables that are also bound *)
 let bound_vars_under_repl = ref BinderSet.empty
@@ -186,7 +181,12 @@ and get_oprocess_bv p =
         List.fold_right add_bv (List.map get_term_bv tl)
           (get_oprocess_bv p)
 
-let iprocess_get_vars (p:inputprocess) =
+(*returns set of free and set of bound variables
+  get_iprocess_bv returns the set of variables bound not under a replication
+  The set of variables bound under a replication is stored in
+  bound_vars_under_repl.
+  The set of free variables is stored in free_vars. *)
+let iprocess_get_vars p =
   free_vars := BinderSet.empty;
   bound_vars_under_repl := BinderSet.empty;
   let bv_no_repl = get_iprocess_bv p in
@@ -196,7 +196,7 @@ let iprocess_get_vars (p:inputprocess) =
   bound_vars_under_repl := BinderSet.empty;
   (fv, bv_no_repl, bv_repl)
 
-let oprocess_get_vars (p:process) =
+let oprocess_get_vars p =
   free_vars := BinderSet.empty;
   bound_vars_under_repl := BinderSet.empty;
   let bv_no_repl = get_oprocess_bv p in
@@ -338,6 +338,11 @@ let pat_tuple_types pat =
                 List.map (Terms.get_type_for_pattern) pl
             | _ -> [Terms.get_type_for_pattern pat]
         )
+
+let get_type_name t =
+  match t.timplname with
+      Some s -> s
+    | None -> error ("Type name required for type "^t.tname)
 
 (* Functions for querying information from implementation annotations *)
 let get_type_predicate t =

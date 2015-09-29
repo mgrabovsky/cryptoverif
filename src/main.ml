@@ -163,9 +163,10 @@ let anal_file s =
     let equivs = List.map Check.check_equiv equivs in
     let new_new_eq = List.map (fun (ty, eq) -> (ty, Check.check_equiv eq)) move_new_eq in
       if !Settings.get_implementation then
-        match !Settings.implementation_func with
+        match !Settings.impl_function with
         | Some f -> f impl
-        | _ -> Parsing_helper.internal_error "Implementation extraction requested but no code generation function specified"
+        | _ -> Parsing_helper.internal_error "Implementation extraction requested \
+                    but no code generation function specified"
       else
         begin
           let g = { proc = Terms.move_occ_process p; game_number = 1; current_queries = [] } in

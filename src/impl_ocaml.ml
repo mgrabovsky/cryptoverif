@@ -48,6 +48,46 @@ open Types
 open Implementation
 
 
+(* returns the next oracles. b represents if the oracle is under replication (false) or not (true) *)
+let rec get_next_oracles b p =
+  match p.i_desc with
+    | Nil -> []
+    | Input((c,tl),pat,p) ->
+        [(b,c.cname,pat,p)]
+    | Par (p1,p2) ->
+        (get_next_oracles b p1) @ (get_next_oracles b p2
+    | Repl(b,p) -> get_next_oracles false p
+
+let get_oracles_type_string o =
+  if o <> [] then
+    "("^(string_list_sep " * " (List.map (fun (_,n) -> get_oracle_name n) o))^")"
+  else
+    "unit"
+
+let get_type_oracle name (s,args_types) =
+  let (ret_types,o) = match s with
+    | Some (rt,o) -> rt,o
+    | None -> [],[]
+  in
+  let ol= get_oracles_type_string o in
+    (get_oracle_name name)^
+      " = "^
+      (
+        if args_types = [] then
+          "unit"
+        else
+          "("^(string_list_sep " * " (List.map get_type_name args_types))^")"
+      )^
+      " -> "^
+      (
+        if ret_types = [] then
+          ol
+        else
+          "("^ol^" * "^
+            (string_list_sep " * " (List.map get_type_name ret_types))^
+            ")"
+      )
+
 let type_append = 
   StringMap.fold 
     (fun name (s,at) acc -> 
@@ -68,16 +108,6 @@ let type_append =
          )
        with Not_found -> 
          StringMap.add name (s,at) acc)
-
-(* returns the next oracles. b represents if the oracle is under replication (false) or not (true) *)
-let rec get_next_oracles b p =
-  match p.i_desc with
-    | Nil -> []
-    | Input((c,tl),pat,p) -> 
-        [(b,c.cname,pat,p)]
-    | Par (p1,p2) ->
-        (get_next_oracles b p1) @ (get_next_oracles b p2)
-    | Repl(b,p) -> get_next_oracles false p
 
 let rec get_oracle_types_oprocess name args_types p = 
   match p.p_desc with
@@ -116,7 +146,6 @@ let rec get_oracle_types_oprocess name args_types p =
     | Insert(tbl,tl,p) ->
         get_oracle_types_oprocess name args_types p
           
-          
 and get_oracle_types_process p =
   match p.i_desc with
     | Nil -> StringMap.empty
@@ -127,41 +156,6 @@ and get_oracle_types_process p =
     | Repl(b,p) -> 
         get_oracle_types_process p
 
-let get_type_name t =
-  match t.timplname with
-      Some s -> s
-    | None -> error ("Type name required for type "^t.tname)
-let get_oracles_type_string o =
-  if o <> [] then
-    "("^(string_list_sep " * " (List.map (fun (_,n) -> get_oracle_name n) o))^")" 
-  else
-    "unit"
-  
-
-let get_type_oracle name (s,args_types) =
-  let (ret_types,o) = match s with
-    | Some (rt,o) -> rt,o
-    | None -> [],[]
-  in
-  let ol= get_oracles_type_string o in
-    (get_oracle_name name)^
-      " = "^
-      (
-        if args_types = [] then 
-          "unit" 
-        else
-          "("^(string_list_sep " * " (List.map get_type_name args_types))^")"
-      )^
-      " -> "^
-      (
-        if ret_types = [] then
-          ol
-        else
-          "("^ol^" * "^
-            (string_list_sep " * " (List.map get_type_name ret_types))^
-            ")"
-      )
-
 let get_oracles_types process = 
   "type "^
     string_list_sep "\n and " 
@@ -169,9 +163,8 @@ let get_oracles_types process =
        (fun name (s,at) acc -> 
           (get_type_oracle name (s,at))::acc)
        (get_oracle_types_process process) [])
-  
 
-let prefix=
+let prefix =
   ref ("open Base\n"^
        "open Crypto\n\n")
 
