@@ -659,7 +659,3 @@ type impl_opt = Read of binder * string | Write of binder * string
 
 (* Type of a program : name, options, process *)
 type impl_process = string * impl_opt list * inputprocess
-
-module type ImplTarget = sig
-    val do_implementation : impl_process list -> unit
-end
