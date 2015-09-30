@@ -55,7 +55,7 @@ let rec get_next_oracles b p =
     | Input((c,tl),pat,p) ->
         [(b,c.cname,pat,p)]
     | Par (p1,p2) ->
-        (get_next_oracles b p1) @ (get_next_oracles b p2
+        (get_next_oracles b p1) @ (get_next_oracles b p2)
     | Repl(b,p) -> get_next_oracles false p
 
 let get_oracles_type_string o =
