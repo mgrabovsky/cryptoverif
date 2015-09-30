@@ -299,9 +299,9 @@ progoptlist:
         { $1 :: $3 }
 
 progopt:
-        IDENT WRITE IDENT
+        IDENT WRITE STRING
         { PWrite($1,$3) }
-|       IDENT READ IDENT
+|       IDENT READ STRING
         { PRead($1,$3) }
 
 prooftoken:
