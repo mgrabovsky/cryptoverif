@@ -5,14 +5,16 @@
  *       Bruno Blanchet and David Cadé                       *
  *                                                           *
  *       Copyright (C) ENS, CNRS, INRIA, 2005-2015           *
+ *                     Matěj Grabovský, Red Hat, 2015        *
  *                                                           *
  *************************************************************)
 
 (*
 
-    Copyright ENS, CNRS, INRIA 
+    Copyright ENS, CNRS, INRIA, Red Hat
     contributors: Bruno Blanchet, Bruno.Blanchet@inria.fr
                   David Cadé
+                  Matěj Grabovský
 
 This software is a computer program whose purpose is to verify 
 cryptographic protocols in the computational model.
