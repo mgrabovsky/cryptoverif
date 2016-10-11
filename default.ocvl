@@ -153,6 +153,119 @@ equiv int_ctxt(enc)
 
 }
 
+(* IND-CCA2 probabilistic symmetric encryption 
+   keyseed: type of key seeds, must be "bounded" (to be able to generate random numbers from it), typically "fixed" and "large".
+   key: type of keys, must be "bounded"
+   cleartext: type of cleartexts
+   ciphertext: type of ciphertexts
+   seed: type of random seeds for encryption, must be "bounded", typically "fixed".
+   
+   kgen: key generation function 
+   enc: encryption function
+   dec: decryption function
+   injbot: natural injection from cleartext to bitstringbot
+   Z: function that returns for each cleartext a cleartext of the same length consisting only of zeroes.
+
+   Penc(t, N, N', l, l'): probability of breaking the IND-CCA2 property
+   in time t for one key, N encryption queries, N' decryption queries with
+   cleartexts of length at most l and ciphertexts of length at most l'.
+
+   The types keyseed, key, cleartext, ciphertext, seed and the
+   probability Penc must be declared before this macro is
+   expanded. The functions kgen, enc, dec, injbot, and Z are declared
+   by this macro. They must not be declared elsewhere, and they can be
+   used only after expanding the macro.
+*)
+
+define IND_CCA2_sym_enc(keyseed, key, cleartext, ciphertext, seed, kgen, enc, dec, injbot, Z, Penc) { 
+
+param N, N2, N3.
+
+fun enc(cleartext, key, seed): ciphertext.
+fun kgen(keyseed):key.
+fun dec(ciphertext, key): bitstringbot.
+
+fun enc2(cleartext, key, seed): ciphertext.
+fun kgen2(keyseed):key.
+fun dec2(ciphertext, key): bitstringbot.
+
+fun injbot(cleartext):bitstringbot [compos].
+forall x:cleartext; injbot(x) <> bottom.
+
+(* The function Z returns for each bitstring, a bitstring
+   of the same length, consisting only of zeroes. *)
+fun Z(cleartext):cleartext.
+
+forall m:cleartext, r:keyseed, r2:seed; 
+	dec(enc(m, kgen(r), r2), kgen(r)) = injbot(m).
+
+	(* IND-CCA2 *)
+
+equiv ind_cca2(enc)
+       foreach i2 <= N2 do r <-R keyseed; (
+       	       foreach i <= N do r2 <-R seed; Oenc(x:cleartext) := return(enc(x, kgen(r), r2)) |
+               foreach i3 <= N3 do Odec(y:ciphertext) := return(dec(y,kgen(r))))
+     <=(N2 * Penc(time + (N2-1)*(time(kgen) + N*time(enc, maxlength(x)) + N*time(Z, maxlength(x)) + N3*time(dec,maxlength(y))), N, N3, maxlength(x), maxlength(y)))=> 
+       foreach i2 <= N2 do r <-R keyseed; (
+       	       foreach i <= N do r2 <-R seed; Oenc(x:cleartext) := z:ciphertext <- enc2(Z(x), kgen2(r), r2); return(z) |
+	       foreach i3 <= N3 do Odec(y:ciphertext) := find j <= N suchthat defined(x[j],r2[j],z[j]) && y = z[j] then return(injbot(x[j])) else return(dec2(y, kgen2(r)))).
+
+}
+
+(* INT-PTXT probabilistic symmetric encryption 
+   keyseed: type of key seeds, must be "bounded" (to be able to generate random numbers from it), typically "fixed" and "large".
+   key: type of keys, must be "bounded"
+   cleartext: type of cleartexts
+   ciphertext: type of ciphertexts
+   seed: type of random seeds for encryption, must be "bounded", typically "fixed".
+   
+   kgen: key generation function 
+   enc: encryption function
+   dec: decryption function
+   injbot: natural injection from cleartext to bitstringbot
+
+   Pencptxt(t, N, N', l, l'): probability of breaking the INT-PTXT property
+   in time t for one key, N encryption queries, N' decryption queries with
+   cleartexts of length at most l and ciphertexts of length at most l'.
+
+   The types keyseed, key, cleartext, ciphertext, seed and the
+   probability Pencptxt must be declared before this macro is
+   expanded. The functions kgen, enc, dec, and injbot are declared
+   by this macro. They must not be declared elsewhere, and they can be
+   used only after expanding the macro.
+*)
+
+define INT_PTXT_sym_enc(keyseed, key, cleartext, ciphertext, seed, kgen, enc, dec, injbot, Pencptxt) { 
+
+param N, N2, N3.
+
+fun enc(cleartext, key, seed): ciphertext.
+fun kgen(keyseed):key.
+fun dec(ciphertext, key): bitstringbot.
+
+fun dec2(ciphertext, key): bitstringbot.
+
+fun injbot(cleartext):bitstringbot [compos].
+forall x:cleartext; injbot(x) <> bottom.
+
+forall m:cleartext, r:keyseed, r2:seed; 
+	dec(enc(m, kgen(r), r2), kgen(r)) = injbot(m).
+
+	(* INT-PTXT *)
+
+equiv int_ptxt(enc)
+      foreach i2 <= N2 do r <-R keyseed; (
+      	      foreach i <= N do r2 <-R seed; Oenc(x:cleartext) := return(enc(x, kgen(r), r2)) |
+	      foreach i3 <= N3 do Odec(y:ciphertext) [useful_change] := return(dec(y,kgen(r)))) 
+     <=(N2 * Pencptxt(time + (N2-1)*(time(kgen) + N*time(enc, maxlength(x)) + N3*time(dec,maxlength(y))), N, N3, maxlength(x), maxlength(y)))=> [computational] 
+      foreach i2 <= N2 do r <-R keyseed [unchanged]; (
+      	      foreach i <= N do r2 <-R seed [unchanged]; Oenc(x:cleartext) := return(enc(x, kgen(r), r2)) |
+	      foreach i3 <= N3 do Odec(y:ciphertext) := 
+				z <- dec2(y, kgen(r));
+                                find j <= N suchthat defined(x[j]) && z = injbot(x[j]) then return(injbot(x[j])) else return(bottom)).
+
+}
+
 (* IND-CCA2 and INT-PTXT probabilistic symmetric encryption 
    keyseed: type of key seeds, must be "bounded" (to be able to generate random numbers from it), typically "fixed" and "large".
    key: type of keys, must be "bounded"
@@ -178,6 +291,10 @@ equiv int_ctxt(enc)
    expanded. The functions kgen, enc, dec, injbot, and Z are declared
    by this macro. They must not be declared elsewhere, and they can be
    used only after expanding the macro.
+
+   CryptoVerif often needs manual guidance with this property,
+   because it does not know which property (IND-CCA2 or INT-PTXT)
+   to apply first.
 *)
 
 define IND_CCA2_INT_PTXT_sym_enc(keyseed, key, cleartext, ciphertext, seed, kgen, enc, dec, injbot, Z, Penc, Pencptxt) { 
@@ -207,6 +324,15 @@ forall m:cleartext, r:keyseed, r2:seed;
 equiv ind_cca2(enc)
        foreach i2 <= N2 do r <-R keyseed; (
        	       foreach i <= N do r2 <-R seed; Oenc(x:cleartext) := return(enc(x, kgen(r), r2)) |
+               foreach i3 <= N3 do Odec(y:ciphertext) := return(dec(y,kgen(r))))
+     <=(N2 * Penc(time + (N2-1)*(time(kgen) + N*time(enc, maxlength(x)) + N*time(Z, maxlength(x)) + N3*time(dec,maxlength(y))), N, N3, maxlength(x), maxlength(y)))=> 
+       foreach i2 <= N2 do r <-R keyseed; (
+       	       foreach i <= N do r2 <-R seed; Oenc(x:cleartext) := z:ciphertext <- enc2(Z(x), kgen2(r), r2); return(z) |
+	       foreach i3 <= N3 do Odec(y:ciphertext) := find j <= N suchthat defined(x[j],r2[j],z[j]) && y = z[j] then return(injbot(x[j])) else return(dec(y, kgen2(r)))).
+
+equiv ind_cca2_after_int_ptxt(enc)
+       foreach i2 <= N2 do r <-R keyseed; (
+       	       foreach i <= N do r2 <-R seed; Oenc(x:cleartext) := return(enc(x, kgen(r), r2)) |
                foreach i3 <= N3 do Odec(y:ciphertext) := return(dec2(y,kgen(r))))
      <=(N2 * Penc(time + (N2-1)*(time(kgen) + N*time(enc, maxlength(x)) + N*time(Z, maxlength(x)) + N3*time(dec,maxlength(y))), N, N3, maxlength(x), maxlength(y)))=> 
        foreach i2 <= N2 do r <-R keyseed; (
@@ -218,12 +344,23 @@ equiv ind_cca2(enc)
 equiv int_ptxt(enc)
       foreach i2 <= N2 do r <-R keyseed; (
       	      foreach i <= N do r2 <-R seed; Oenc(x:cleartext) := return(enc(x, kgen(r), r2)) |
-	      foreach i3 <= N3 do Odec(y:ciphertext) := return(dec(y,kgen(r)))) 
-     <=(N2 * Pencptxt(time + (N2-1)*(time(kgen) + N*time(enc, maxlength(x)) + N*time(Z, maxlength(x)) + N3*time(dec,maxlength(y))), N, N3, maxlength(x), maxlength(y)))=> [computational] 
+	      foreach i3 <= N3 do Odec(y:ciphertext) [useful_change] := return(dec(y,kgen(r)))) 
+     <=(N2 * Pencptxt(time + (N2-1)*(time(kgen) + N*time(enc, maxlength(x)) + N3*time(dec,maxlength(y))), N, N3, maxlength(x), maxlength(y)))=> [computational] 
       foreach i2 <= N2 do r <-R keyseed [unchanged]; (
       	      foreach i <= N do r2 <-R seed [unchanged]; Oenc(x:cleartext) := return(enc(x, kgen(r), r2)) |
 	      foreach i3 <= N3 do Odec(y:ciphertext) := 
 				z <- dec2(y, kgen(r));
+                                find j <= N suchthat defined(x[j]) && z = injbot(x[j]) then return(injbot(x[j])) else return(bottom)).
+
+equiv int_ptxt_after_ind_cca2(enc)
+      foreach i2 <= N2 do r <-R keyseed; (
+      	      foreach i <= N do r2 <-R seed; Oenc(x:cleartext) := return(enc2(x, kgen2(r), r2)) |
+	      foreach i3 <= N3 do Odec(y:ciphertext) [useful_change] := return(dec(y,kgen2(r)))) 
+     <=(N2 * Pencptxt(time + (N2-1)*(time(kgen) + N*time(enc, maxlength(x)) + N3*time(dec,maxlength(y))), N, N3, maxlength(x), maxlength(y)))=> [computational] 
+      foreach i2 <= N2 do r <-R keyseed [unchanged]; (
+      	      foreach i <= N do r2 <-R seed [unchanged]; Oenc(x:cleartext) := return(enc2(x, kgen2(r), r2)) |
+	      foreach i3 <= N3 do Odec(y:ciphertext) := 
+				z <- dec2(y, kgen2(r));
                                 find j <= N suchthat defined(x[j]) && z = injbot(x[j]) then return(injbot(x[j])) else return(bottom)).
 
 }

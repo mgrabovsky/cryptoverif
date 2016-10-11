@@ -137,7 +137,7 @@ let expand_assign_term let_t remove_set
 	end
       else
 	match remove_set with
-	  All -> put_link()
+	  All | FindCond -> put_link()
 	| OneBinder b0 when b == b0 -> put_link()
 	| _ -> 
 	    match t.t_desc with
@@ -481,7 +481,7 @@ let remove_assignments remove_set g =
   done_sa_rename := [];
   done_transfos := [];
   let r = 
-    if remove_set == Minimal then
+    if (remove_set == Minimal) || (remove_set = FindCond) then
       remove_assignments_repeat (!Settings.max_iter_removeuselessassign) remove_set g.proc
     else
       remove_assignments remove_set g.proc

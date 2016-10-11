@@ -65,7 +65,8 @@ let has_common_elem l1 l2 =
 
 let sa_rename_ins_updater b bl = function
     (ExpandIfFindGetInsert | Simplify _ | RemoveAssign(All) | 
-     RemoveAssign(Minimal) | MoveNewLet(MAll | MNoArrayRef | MLet | MNew | MNewNoArrayRef) | 
+     RemoveAssign(Minimal) | RemoveAssign(FindCond) | 
+     MoveNewLet(MAll | MNoArrayRef | MLet | MNew | MNewNoArrayRef) | 
      Proof _ | InsertEvent _ | InsertInstruct _ | ReplaceTerm _ | MergeBranches |
      MergeArrays _ (* MergeArrays does contain variable names, but it is advised only when these variables have a single definition, so they are not modified by SArename *)) as x -> [x]
   | RemoveAssign (OneBinder b') ->
@@ -188,6 +189,10 @@ let execute_state_basic state i =
       Settings.changed := tmp_changed;
       (state, None)
     end
+
+let default_remove_assign() =
+  let r = if !Settings.auto_remove_assign_find_cond then FindCond else Minimal in
+  RemoveAssign(r)
       
 let rec execute_state state = function
     SArenaming b ->
@@ -197,7 +202,7 @@ let rec execute_state state = function
       let (state', ins_updater) = execute_state_basic state (SArenaming b) in
       if !Settings.changed then 
 	if !Settings.simplify_after_sarename then 
-	  let (state'', ins_updater') = execute_state_basic state' (RemoveAssign Minimal) in
+	  let (state'', ins_updater') = execute_state_basic state' (default_remove_assign()) in
 	  let (state''', ins_updater'') = execute_state state'' (Simplify []) in
 	  (state''', compos_ins_updater (compos_ins_updater ins_updater ins_updater') ins_updater'')
 	else
@@ -350,7 +355,7 @@ let move_new_let state =
 let remove_assign_no_sa_rename state =
   let tmp_auto_sa_rename = !Settings.auto_sa_rename in
   Settings.auto_sa_rename := false;
-  let state' = execute_with_advise_last state (RemoveAssign Minimal) in
+  let state' = execute_with_advise_last state (default_remove_assign()) in
   Settings.auto_sa_rename := tmp_auto_sa_rename;
   state'
 
@@ -360,7 +365,7 @@ let merge state =
   else
     state
 
-let simplify state = merge (execute_with_advise_last (move_new_let (execute_with_advise_last (remove_assign_no_sa_rename state) (Simplify []))) (RemoveAssign Minimal))
+let simplify state = merge (execute_with_advise_last (move_new_let (execute_with_advise_last (remove_assign_no_sa_rename state) (Simplify []))) (default_remove_assign()))
 
 let expand_simplify state = simplify (execute_with_advise_last state ExpandIfFindGetInsert)
 
@@ -1043,6 +1048,7 @@ let rec interpret_command interactive state = function
       begin
 	match l with
 	  [("useless", _)] -> execute_display_advise state (RemoveAssign Minimal)
+	| [("findcond", _)] -> execute_display_advise state (RemoveAssign FindCond)
 	| [("all", _)] -> execute_display_advise state (RemoveAssign All)
 	| [("binder",_); id] -> 
 	    let binders = find_binders state.game.proc in

@@ -186,3 +186,8 @@ process
 	 (! N processB) | 
 	 (! N processS) |
 	 (! N2 processK))
+
+(* EXPECTED
+RESULT Could not prove event inj:endB(x, y, n, k) ==> inj:beginA(x, y, n).
+2.230s (user 2.230s + system 0.000s), max rss 96752K
+END *)

@@ -92,7 +92,7 @@ let unique_branch = ref true
 let unique_branch_reorg = ref true
 
 let auto_sa_rename = ref true
-
+let auto_remove_assign_find_cond = ref true
 let auto_move = ref true
 
 let optimize_let_vars = ref false
@@ -175,6 +175,8 @@ let do_set p v =
   | "uniqueBranchReorganize", S ("false",_) -> unique_branch_reorg := false
   | "autoSARename", S ("true",_) -> auto_sa_rename := true
   | "autoSARename", S ("false",_) -> auto_sa_rename := false
+  | "autoRemoveAssignFindCond", S ("true",_) -> auto_remove_assign_find_cond := true
+  | "autoRemoveAssignFindCond", S ("false",_) -> auto_remove_assign_find_cond := false
   | "autoMove", S ("true",_) -> auto_move := true
   | "autoMove", S ("false",_) -> auto_move := false
   | "optimizeVars", S ("true",_) -> optimize_let_vars := true

@@ -1079,6 +1079,8 @@ let display_rem_set = function
       print_string "$"
   | Minimal -> 
       print_string "useless"
+  | FindCond -> 
+      print_string "findcond"
 
 let display_move_set = function
     MAll -> print_string "all\\ binders"

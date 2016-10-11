@@ -1,6 +1,18 @@
 This file summarizes the most important changes between versions
 of the cryptographic protocol verifier.
 
+Version 1.23
+
+- By default, automatically remove assignments on variables defined 
+by "let" in conditions of find.
+- Definitions for IND-CCA2 symmetric encryption and INT-PTXT 
+symmetric encryption added to the cryptographic library;
+definition of IND-CCA2 and INT-PTXT symmetric encryption made
+more flexible by allowing the two properties to be applied in 
+any order.
+- Fixed bug in definition of IND-CCA2, INT-PTXT symmetric encryption,
+which could cause an infinite loop.
+
 Version 1.22
 
 - Improved global dependency analysis for find with complex

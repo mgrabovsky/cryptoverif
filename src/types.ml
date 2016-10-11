@@ -488,6 +488,7 @@ and query =
 and rem_set =
     All
   | OneBinder of binder
+  | FindCond
   | Minimal
 
 and move_set =
