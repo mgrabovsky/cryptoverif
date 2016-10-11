@@ -154,6 +154,25 @@ let equal_query q1 q2 =
   | (QSecret1 b1, QSecret1 b2) -> b1 == b2
   | _ -> false
 
+let eq_pair (a1,b1) (a2,b2) =
+  a1 == a2 && b1 == b2
+	
+let equal_user_info i1 i2 =
+  match i1,i2 with
+    VarList(bl1,b1),VarList(bl2,b2) -> (equal_lists (==) bl1 bl2) && (b1 == b2)
+  | Detailed(vmopt1,tmopt1), Detailed(vmopt2,tmopt2) ->
+     (match vmopt1, vmopt2 with
+       None, None -> true
+     | Some(ml1,l1,b1), Some(ml2,l2,b2) ->
+	 (equal_lists eq_pair ml1 ml2) && (equal_lists (==) l1 l2) && (b1 == b2)
+     | _ -> false) &&
+      (match tmopt1, tmopt2 with
+	None, None -> true
+      | Some(ml1,b1), Some(ml2,b2) ->
+	  (equal_lists eq_pair ml1 ml2) && (b1 == b2)
+      | _ -> false)
+  | _ -> false
+	
 let equal_instruct i1 i2 =
   match i1,i2 with
     (ExpandIfFindGetInsert, ExpandIfFindGetInsert) -> true
@@ -163,7 +182,7 @@ let equal_instruct i1 i2 =
   | (SArenaming b1, SArenaming b2) -> b1 == b2
   | (MoveNewLet mset1, MoveNewLet mset2) -> equal_mset mset1 mset2
   | (CryptoTransf (eq1, bl1), CryptoTransf (eq2, bl2)) -> 
-      (eq1 == eq2) && (equal_lists (==) bl1 bl2)
+      (eq1 == eq2) && (equal_user_info bl1 bl2)
   | (InsertEvent(s1,n1), InsertEvent(s2,n2)) ->
       (s1 = s2) && (n1 == n2)
   | (InsertInstruct(s1,_,n1,_), InsertInstruct(s2,_,n2,_)) ->
@@ -1570,7 +1589,7 @@ and copy_term transf t =
   | ResE(b,t) ->
       build_term2 t (ResE(b, copy_term transf t))
   | EventAbortE(f) ->
-      Parsing_helper.internal_error "Event should have been expanded"
+      build_term2 t (EventAbortE(f))
 
 and copy_def_list transf def_list =
   match transf with

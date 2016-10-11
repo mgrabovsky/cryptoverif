@@ -165,6 +165,9 @@ let return_channel = dummy_channel
 %start instruct
 %type <Ptree.process_e> instruct
 
+%start cryptotransfinfo
+%type <Ptree.crypto_transf_user_info> cryptotransfinfo
+
 %start term
 %type <Ptree.term_e> term
 
@@ -879,3 +882,51 @@ allowed_coll:
     { [$1] }
 |   quot COMMA allowed_coll
     { $1 :: $3 }
+
+/* User information for the cryptographic transformation */
+
+identmapping:
+    IDENT MAPSTO IDENT
+    { [$1,$3] }
+|   IDENT MAPSTO IDENT COMMA identmapping
+    { ($1,$3)::$5 }
+
+intidentmapping:
+    INT MAPSTO IDENT
+    { [$1,$3] }
+|   INT MAPSTO IDENT COMMA intidentmapping
+    { ($1,$3)::$5 }
+
+detailedinfo:
+    IDENT COLON identmapping
+    { PVarMapping($1, $3, false) }
+|   IDENT COLON identmapping DOT
+    { PVarMapping($1, $3, true) }
+|   IDENT COLON intidentmapping
+    { PTermMapping($1, $3, false) }
+|   IDENT COLON intidentmapping DOT
+    { PTermMapping($1, $3, true) }
+
+detailedinfolist:
+    detailedinfo
+    { [$1] }
+|   detailedinfo SEMI detailedinfolist
+    { $1::$3 }
+
+neidentlistnosep:
+        IDENT 
+        { [$1] }
+|       IDENT neidentlistnosep
+        { $1 :: $2 }
+
+cryptotransfinfo:
+    
+    { PVarList([],false) }
+|   MUL
+    { PRepeat }
+|   neidentlistnosep
+    { PVarList($1, false) }
+|   neidentlistnosep DOT
+    { PVarList($1, true) }
+|   detailedinfolist
+    { PDetailed($1) }

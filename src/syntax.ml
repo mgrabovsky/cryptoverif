@@ -66,12 +66,8 @@ let parse filename =
       with 
 	Parsing.Parse_error ->
           input_error "Syntax error" (extent lexbuf)
-      |	IllegalCharacter ->
-	  input_error "Illegal character" (extent lexbuf)
-      | IllegalEscape -> 
-          input_error "Illegal escape" (extent lexbuf)
-      | UnterminatedString -> 
-          input_error "Unterminated string" (extent lexbuf)
+      |	Error(s,ext) ->
+	  input_error s ext
     in
     close_in ic;
     ptree

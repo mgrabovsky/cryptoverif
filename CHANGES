@@ -1,6 +1,24 @@
 This file summarizes the most important changes between versions
 of the cryptographic protocol verifier.
 
+Version 1.22
+
+- Improved global dependency analysis for find with complex
+  find conditions (containing themselves find, if, or let).
+- Allow variables that depend on b0 without characterizing
+  b0 in global dependency analysis.
+- Allow the user to specify the mapping from variables of the
+  game to variables of the equivalence, and the mapping from terms
+  of the game to oracles of equivalence, in the cryptographic
+  transformation.
+- Apply simplifications of booleans terms to all subterms, not only
+  to the root.
+- Fixed bug in cryptographic transformation, which could make it
+  fail unexpectedly.
+- Fixed bug in cryptographic transformation: when using known equalities
+  to transform terms, the defined conditions of find were not
+  correctly updated.
+
 Version 1.21
 
 - Display an explanation when a cryptographic transformation

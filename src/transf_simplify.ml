@@ -1561,6 +1561,7 @@ and simplify_term_let let_t true_facts_else cur_array true_facts ttrue tfalse t'
 exception OneBranchProcess of process findbranch
 
 let rec simplify_process cur_array dep_info true_facts p = 
+  (* print_string "Simplify occ "; print_int p.i_occ; print_newline(); *)
   let dep_info' = DepAnal2.update_dep_info cur_array dep_info true_facts p in
   Terms.iproc_from_desc2 p (
   match p.i_desc with
@@ -1580,6 +1581,7 @@ let rec simplify_process cur_array dep_info true_facts p =
 
 
 and simplify_oprocess cur_array dep_info true_facts p =
+  (* print_string "Simplify occ "; print_int p.p_occ; print_newline(); *)
   let (p', dep_info_list') = DepAnal2.update_dep_infoo cur_array dep_info true_facts p in
   match p'.p_desc with
     Yield -> Terms.oproc_from_desc Yield

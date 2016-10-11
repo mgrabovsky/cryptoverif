@@ -640,11 +640,11 @@ let rec apply_subst1 simp_facts t tsubst =
    the equalities in [simp_facts] to enable their application.
    Application is repeated until a fixpoint is reached. *)
 
-let rec apply_reds simp_facts t =
+let rec apply_reds depth simp_facts t =
   reduced := false;
-  let t' = apply_eq_statements_and_collisions_subterms_once (reduce_rec simp_facts) simp_facts t in
+  let t' = apply_eq_statements_and_collisions_subterms_once (reduce_rec depth simp_facts) simp_facts t in
   if !reduced then 
-    apply_reds simp_facts t' 
+    apply_reds (depth+1) simp_facts t' 
   else
     t
 
@@ -666,13 +666,13 @@ and apply_sub1 simp_facts t link =
    At most one reduction is done. When the reduction succeeds,
    it returns (true, reduced_term); otherwise, it returns (false, t). *)
 
-and apply_eq_st_coll1 simp_facts t =
+and apply_eq_st_coll1 depth simp_facts t =
   match t.t_desc with
     Var _ | ReplIndex _ ->
       (false, t)
   | FunApp _ ->
       reduced := false;
-      let t' = apply_eq_statements_and_collisions_subterms_once (reduce_rec simp_facts) simp_facts t in
+      let t' = apply_eq_statements_and_collisions_subterms_once (reduce_rec depth simp_facts) simp_facts t in
       (!reduced, t')
   | _ -> Parsing_helper.internal_error "If/let/find/new not allowed in apply_eq_st_coll1"
 
@@ -680,9 +680,9 @@ and apply_eq_st_coll1 simp_facts t =
    in addition to the already known facts [simp_facts]. It sets the flag [reduced]
    when [t] has really been modified. *)
 
-and reduce_rec simp_facts f t = 
+and reduce_rec depth simp_facts f t = 
   Terms.auto_cleanup (fun () ->
-    let simp_facts' = simplif_add no_dependency_anal simp_facts f in
+    let simp_facts' = simplif_add (depth+1) no_dependency_anal simp_facts f in
     apply_eq_statements_subterms_once simp_facts' t)   
 
 (* Replaces each occurence of t in fact with true *)
@@ -703,7 +703,7 @@ and replace_with_true modified t fact =
       (* ReplIndex can occur here because replication indices can occur as arguments of functions in events *)
 	  
 (* Simplify existing facts by knowing that the new term t is true, and then simplify the term t by knowing the facts are true *)
-and simplify_facts dep_info (subst2,facts,elsefind) t =
+and simplify_facts depth dep_info (subst2,facts,elsefind) t =
   let mod_facts = ref [] in
   let not_mod_facts = ref [] in
   List.iter
@@ -721,21 +721,31 @@ and simplify_facts dep_info (subst2,facts,elsefind) t =
   (* not(true) is not simplified in add_fact, simplify it here *)
   let t' = 
     if !m then 
-      apply_reds (subst2,(!not_mod_facts),elsefind) t'
+      apply_reds depth (subst2,(!not_mod_facts),elsefind) t'
     else
       t'
   in  
-  t',simplif_add_list dep_info (subst2,(!not_mod_facts),elsefind) (!mod_facts) 
+  t',simplif_add_list depth dep_info (subst2,(!not_mod_facts),elsefind) (!mod_facts) 
 
 (* Add a fact to a set of true facts, and simplify it *)
 
-and add_fact dep_info simp_facts fact =
+and add_fact depth dep_info simp_facts fact =
+  if (!Settings.max_depth_add_fact > 0) && (depth > !Settings.max_depth_add_fact) then 
+    begin
+      (*if (!Settings.debug_simplif_add_facts) then*)
+	begin
+	  print_string "Adding "; Display.display_term fact; print_string " stopped because too deep."; print_newline()
+	end;
+      simp_facts 
+    end
+  else
+    begin
   if (!Settings.debug_simplif_add_facts) then
     begin
       print_string "Adding "; Display.display_term fact; print_newline()
     end;
   let fact' = try_no_var simp_facts fact in
-  let fact',simp_facts = simplify_facts dep_info simp_facts fact' in
+  let fact',simp_facts = simplify_facts (depth+1) dep_info simp_facts fact' in
   let (subst2,facts,elsefind)=simp_facts in
   match fact'.t_desc with
     FunApp(f,[t1;t2]) when f.f_cat == LetEqual ->
@@ -747,10 +757,10 @@ and add_fact dep_info simp_facts fact =
 	    let t2' = normalize simp_facts t2 in
 	    let rec try_red_t1 = function
 		[] -> (* Could not reduce t1' *)
-		  subst_simplify2 dep_info simp_facts (Terms.make_let_equal t1' t2')
+		  subst_simplify2 (depth+1) dep_info simp_facts (Terms.make_let_equal t1' t2')
 	      | { t_desc = FunApp(f'',[t1'';t2''])}::l when f''.f_cat == LetEqual ->
 		  if Terms.equal_terms t1'' t1' then 
-		    simplif_add dep_info simp_facts (Terms.make_equal t2' t2'')
+		    simplif_add (depth+1) dep_info simp_facts (Terms.make_equal t2' t2'')
 		  else
 		    try_red_t1 l
 	      | _::l -> try_red_t1 l
@@ -778,12 +788,12 @@ and add_fact dep_info simp_facts fact =
 		  raise Contradiction
 	      | (FunApp(f1,l1), FunApp(f2,l2)) when
 		(f1.f_options land Settings.fopt_COMPOS) != 0 && f1 == f2 -> 
-		  simplif_add_list dep_info simp_facts (List.map2 Terms.make_equal l1 l2)
+		  simplif_add_list (depth+1) dep_info simp_facts (List.map2 Terms.make_equal l1 l2)
 	      | (Var(b1,l1), Var(b2,l2)) when
 		(Terms.is_restr b1) &&
 		(Proba.is_large_term t1'  || Proba.is_large_term t2') && (b1 == b2) &&
 		(Proba.add_elim_collisions b1 b1) ->
-		  simplif_add_list dep_info simp_facts (List.map2 Terms.make_equal l1 l2)
+		  simplif_add_list (depth+1) dep_info simp_facts (List.map2 Terms.make_equal l1 l2)
 	      | (Var(b1,l1), Var(b2,l2)) when
 		(Terms.is_restr b1) && (Terms.is_restr b2) &&
 		(Proba.is_large_term t1' || Proba.is_large_term t2') &&
@@ -799,11 +809,11 @@ and add_fact dep_info simp_facts fact =
 		      if Terms.is_false t' then
 			raise Contradiction
 		      else
-			simplif_add dep_info simp_facts t'
+			simplif_add (depth+1) dep_info simp_facts t'
 		  | None -> 
 		      match orient_eq t1' t2' with
 			Some(t1'',t2'') -> 
-			  subst_simplify2 dep_info simp_facts (Terms.make_equal t1'' t2'')
+			  subst_simplify2 (depth+1) dep_info simp_facts (Terms.make_equal t1'' t2'')
 		      | None ->
 			  (subst2, fact'::facts, elsefind)
 	    end
@@ -826,11 +836,11 @@ and add_fact dep_info simp_facts fact =
 		  if Terms.is_false t' then
 		    raise Contradiction
 		  else
-		    simplif_add dep_info simp_facts t'
+		    simplif_add (depth+1) dep_info simp_facts t'
 	      |	None ->
 		match prod_orient_eq eq_th l1' l2' with
 		  Some(t1'',t2'') -> 
-		    subst_simplify2 dep_info simp_facts (Terms.make_equal t1'' t2'')
+		    subst_simplify2 (depth+1) dep_info simp_facts (Terms.make_equal t1'' t2'')
 		| None ->
 		    (subst2, fact'::facts, elsefind)
 	    end
@@ -845,20 +855,21 @@ and add_fact dep_info simp_facts fact =
 	(f1.f_options land Settings.fopt_COMPOS) != 0 && f1 == f2 -> 
 	  let vars = ref [] in
 	  if List.for_all (Terms.single_occ_gvar vars) l1 && List.for_all (Terms.single_occ_gvar vars) l2 then
-	    simplif_add dep_info simp_facts (Terms.make_or_list (List.map2 Terms.make_for_all_diff l1 l2))
+	    simplif_add (depth+1) dep_info simp_facts (Terms.make_or_list (List.map2 Terms.make_for_all_diff l1 l2))
 	  else
 	    (subst2, fact'::facts, elsefind)
       | _ -> (subst2, fact'::facts, elsefind)
       end
   | FunApp(f,[t1;t2]) when f == Settings.f_and ->
-      simplif_add dep_info (add_fact dep_info simp_facts t1) t2
+      simplif_add (depth+1) dep_info (add_fact (depth+1) dep_info simp_facts t1) t2
   | _ -> 
       if Terms.is_false fact' then raise Contradiction else
       if Terms.is_true fact' then simp_facts else
       let facts' = if List.exists (Terms.equal_terms fact') facts then facts else fact'::facts in
       (subst2, facts', elsefind)
+    end
 
-and subst_simplify2 dep_info (subst2, facts, elsefind) link =
+and subst_simplify2 depth dep_info (subst2, facts, elsefind) link =
   if (match link.t_desc with
     FunApp(f, [t;t']) when f.f_cat == Equal || f.f_cat == LetEqual ->
       Terms.equal_terms t t'
@@ -912,9 +923,9 @@ and subst_simplify2 dep_info (subst2, facts, elsefind) link =
       FunApp(f, [t;t']) when f.f_cat == Equal || f.f_cat == LetEqual ->
 	let simp_facts_tmp = (link :: (!subst2'') @ rest, facts, elsefind) in
 	(* Reduce the LHS of the equality t = t' *)
-	let (reduced_lhs, t1) = apply_eq_st_coll1 simp_facts_tmp t in
+	let (reduced_lhs, t1) = apply_eq_st_coll1 depth simp_facts_tmp t in
 	(* Reduce the RHS of the equality t = t' *)
-	let (reduced_rhs, t1') = apply_eq_st_coll1 simp_facts_tmp t' in
+	let (reduced_rhs, t1') = apply_eq_st_coll1 depth simp_facts_tmp t' in
 	if reduced_lhs || reduced_rhs then
 	  let fact' = Terms.build_term_type Settings.t_bool (FunApp(f,[t1; t1'])) in
 	  if not reduced_lhs then
@@ -939,7 +950,7 @@ and subst_simplify2 dep_info (subst2, facts, elsefind) link =
     match t0.t_desc with
       FunApp(f, [t;t']) when f.f_cat == Equal || f.f_cat == LetEqual ->
 	(* Reduce the LHS of the equality t = t' *)
-	let (reduced_lhs, t1) = apply_eq_st_coll1 simp_facts t in
+	let (reduced_lhs, t1) = apply_eq_st_coll1 depth simp_facts t in
 	if not reduced_lhs then
 	  rhs_reduced := t0 :: (!rhs_reduced) 
 	else	    
@@ -951,29 +962,39 @@ and subst_simplify2 dep_info (subst2, facts, elsefind) link =
     | _ -> Parsing_helper.internal_error "substitutions should be Equal or LetEqual terms"
 	  ) new_rhs_reduced;
   let (subst2_added_rhs_reduced, facts_to_add, elsefind) =
-    specialized_add_list dep_info (link :: (!subst2''), !not_subst2_facts, elsefind) (!rhs_reduced)
+    specialized_add_list depth dep_info (link :: (!subst2''), !not_subst2_facts, elsefind) (!rhs_reduced)
   in
-  simplif_add_list dep_info (subst2_added_rhs_reduced,[], elsefind) facts_to_add
+  simplif_add_list depth dep_info (subst2_added_rhs_reduced,[], elsefind) facts_to_add
 
-and simplif_add dep_info simp_facts fact =
+and simplif_add depth dep_info simp_facts fact =
   if (!Settings.debug_simplif_add_facts) then
     begin
       print_string "simplif_add "; Display.display_term fact; 
       print_string " knowing\n"; display_facts simp_facts; print_newline();
     end;
-  let fact' = apply_reds simp_facts fact in
-  add_fact dep_info simp_facts fact'
+  let fact' = apply_reds depth simp_facts fact in
+  add_fact depth dep_info simp_facts fact'
 
-and simplif_add_list dep_info simp_facts = function
+and simplif_add_list depth dep_info simp_facts = function
     [] -> simp_facts
-  | (a::l) -> simplif_add_list dep_info (simplif_add dep_info simp_facts a) l
+  | (a::l) -> simplif_add_list depth dep_info (simplif_add depth dep_info simp_facts a) l
 
 (* The following functions are specialized to the case in which, in subst_simplify2,
    the added fact [link] reduces the RHS of an existing substitution, but not its LHS.
    These functions guarantee that the orientation of the substitution is not reversed,
    which would cause a possible non-termination. *)
 
-and specialized_add_fact dep_info simp_facts fact =
+and specialized_add_fact depth dep_info simp_facts fact =
+  if (!Settings.max_depth_add_fact > 0) && (depth > !Settings.max_depth_add_fact) then 
+    begin
+      (*if (!Settings.debug_simplif_add_facts) then*)
+	begin
+	  print_string "Adding "; Display.display_term fact; print_string " (specialized) stopped because too deep."; print_newline()
+	end;
+      simp_facts 
+    end
+  else
+    begin
   if (!Settings.debug_simplif_add_facts) then
     begin
       print_string "specialized_add_fact "; Display.display_term fact; print_newline()
@@ -982,7 +1003,7 @@ and specialized_add_fact dep_info simp_facts fact =
   match fact.t_desc with
     FunApp(f,[({ t_desc = Var _ } as t1);t2]) when f.f_cat == LetEqual ->
       let t2' = normalize simp_facts t2 in
-      specialized_subst_simplify2 dep_info simp_facts (Terms.make_let_equal t1 t2')
+      specialized_subst_simplify2 (depth+1) dep_info simp_facts (Terms.make_let_equal t1 t2')
   | FunApp(f,[t1;t2]) when f.f_cat == Equal ->
       let t2' = normalize simp_facts t2 in
       begin
@@ -1016,14 +1037,15 @@ and specialized_add_fact dep_info simp_facts fact =
 		  (subst2, t' :: facts, elsefind)
 	    | None ->
 		if not (Terms.is_subterm t1 t2') then
-		  specialized_subst_simplify2 dep_info simp_facts (Terms.make_equal t1 t2')
+		  specialized_subst_simplify2 (depth+1) dep_info simp_facts (Terms.make_equal t1 t2')
 		else
 		  (subst2, fact::facts, elsefind)
       end
   | _ -> 
       Parsing_helper.internal_error "specialized_add_fact: t = t' expected"
+    end
 
-and specialized_subst_simplify2 dep_info (subst2, facts, elsefind) link =
+and specialized_subst_simplify2 depth dep_info (subst2, facts, elsefind) link =
   if (match link.t_desc with
     FunApp(f, [t;t']) when f.f_cat == Equal || f.f_cat == LetEqual ->
       Terms.equal_terms t t'
@@ -1068,7 +1090,7 @@ and specialized_subst_simplify2 dep_info (subst2, facts, elsefind) link =
 	match t0.t_desc with
 	  FunApp(f, [t;t']) when f.f_cat == Equal || f.f_cat == LetEqual ->
 	    (* Reduce the RHS of the equality t = t' *)
-	    let (reduced, t1') = apply_eq_st_coll1 (link :: (!subst2'') @ rest, facts, elsefind) t' in
+	    let (reduced, t1') = apply_eq_st_coll1 depth (link :: (!subst2'') @ rest, facts, elsefind) t' in
 	    if reduced then
 	      let fact' = Terms.build_term_type Settings.t_bool (FunApp(f,[t; t1'])) in
 	      rhs_reduced := fact' :: (!rhs_reduced)
@@ -1079,9 +1101,9 @@ and specialized_subst_simplify2 dep_info (subst2, facts, elsefind) link =
 	apply_eq_st rest
   in
   apply_eq_st subst2;
-  specialized_add_list dep_info (link :: (!subst2''), !not_subst2_facts, elsefind) (!rhs_reduced)
+  specialized_add_list depth dep_info (link :: (!subst2''), !not_subst2_facts, elsefind) (!rhs_reduced)
 
-and specialized_simplif_add dep_info simp_facts fact =
+and specialized_simplif_add depth dep_info simp_facts fact =
   if (!Settings.debug_simplif_add_facts) then
     begin
       print_string "specialized_simplif_add "; Display.display_term fact; 
@@ -1089,15 +1111,15 @@ and specialized_simplif_add dep_info simp_facts fact =
     end;
   let fact' = match fact.t_desc with
     FunApp(f,[t;t']) -> 
-      Terms.build_term_type Settings.t_bool (FunApp(f, [t;apply_reds simp_facts t']))
+      Terms.build_term_type Settings.t_bool (FunApp(f, [t;apply_reds depth simp_facts t']))
   | _ ->
       Parsing_helper.internal_error "specialized_add_fact: t = t' expected"
   in
-  specialized_add_fact dep_info simp_facts fact'
+  specialized_add_fact depth dep_info simp_facts fact'
 
-and specialized_add_list dep_info simp_facts = function
+and specialized_add_list depth dep_info simp_facts = function
     [] -> simp_facts
-  | (a::l) -> specialized_add_list dep_info (specialized_simplif_add dep_info simp_facts a) l
+  | (a::l) -> specialized_add_list depth dep_info (specialized_simplif_add depth dep_info simp_facts a) l
 
 (*let simplif_add dep_info s f =
   print_string "Adding "; Display.display_term f;
@@ -1127,6 +1149,18 @@ let simplif_add_list dep_info s fl =
     print_string "Contradiction\n\n";
     raise Contradiction
 *)
+
+let apply_reds simp_facts t = 
+  apply_reds 0 simp_facts t
+
+let simplif_add dep_info simp_facts fact =
+  simplif_add 0 dep_info simp_facts fact
+
+let simplif_add_list dep_info simp_facts fact =
+  simplif_add_list 0 dep_info simp_facts fact
+
+let reduce_rec simp_facts =
+  reduce_rec 0 simp_facts
 
 let simplif_add_find_cond dep_info simp_facts fact =
   match fact.t_desc with
@@ -2261,14 +2295,18 @@ let rec simplify_term_rec dep_info simp_facts t =
       end
   | _ -> apply_reds simp_facts t
 
+let rec simplify_bool_subterms dep_info simp_facts t =
+  if t.t_type == Settings.t_bool then
+    simplify_term_rec dep_info simp_facts t
+  else
+    match t.t_desc with
+      FunApp(f,l) ->
+	Terms.build_term2 t (FunApp(f, List.map (simplify_bool_subterms dep_info simp_facts) l))
+    | _ -> t
+	
 let simplify_term dep_info simp_facts t = 
   let t' = apply_reds simp_facts t in
-  if t'.t_type == Settings.t_bool then
-    simplify_term_rec dep_info simp_facts t'
-  else
-    t'
-
-
+  simplify_bool_subterms dep_info simp_facts t'
 
 (***** [check_equal t t' simp_facts], defined below, 
        shows that two terms [t] and [t'] are equal (up to negligible probability) *****

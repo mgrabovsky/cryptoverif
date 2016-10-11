@@ -1154,6 +1154,8 @@ equation commut(mult).
 
 forall a:G, x:Z, y:Z;
   exp(exp(a,x), y) = exp(a, mult(x,y)).
+forall a:G, x:Z, y:Z;
+  exp'(exp'(a,x), y) = exp'(a, mult(x,y)).
 
 (* injectivity *)
 
@@ -1248,13 +1250,13 @@ equiv gdh(exp)
       OA() := exp'(g,a), 
       Oa() := let ka:bitstring = mark in a,
       !naDDH1 ODDHa1(m:G, m':G) := if defined(ka) then m = exp'(m', a) else 
-      		  	   find u<=nb suchthat defined(b[u],kb[u]) && m' = exp(g,b[u]) then m = exp'(m', a) else
-			   find u<=nb suchthat defined(b[u]) && m' = exp(g,b[u]) then false else
+      		  	   find u<=nb suchthat defined(b[u],kb[u]) && m' = exp'(g,b[u]) then m = exp'(m', a) else
+			   find u<=nb suchthat defined(b[u]) && m' = exp'(g,b[u]) then false else
                                (* by CDH, if neither a nor b[u] are leaked, then m = exp(g, b[u]*a) is impossible *)
 			   m = exp'(m', a)
 			       (* GDH allows to compute m = exp(m',a) for any m and m', without leaking a, 
 			          as it is DDH(g, exp(g,a), m', m) *),
-      !naDDH2 ODDHa2(m:G,m':G,j<=nb) := exp(m, b[j]) = exp(m',a),
+      !naDDH2 ODDHa2(m:G,m':G,j<=nb) := exp'(m, b[j]) = exp'(m',a),
       	   (* GDH allows to compute exp(m, b[j]) = exp(m',a) for any m and m', 
 	      without leaking a, as it is DDH(exp(g,a), exp(g,b[j]), m, m')
 	      Indeed, 
@@ -1263,12 +1265,12 @@ equiv gdh(exp)
       		= (b[j]/a * log_g(m)/a = log_g(m')/a)
       		= (b[j] * log_g(m) = a log_g(m'))
       		= (m^b[j] = m'^a). *)
-      !naDDH3 ODDHa3(m:G,m':G,j<=na) := exp(m, a[j]) = exp(m',a),
+      !naDDH3 ODDHa3(m:G,m':G,j<=na) := exp'(m, a[j]) = exp'(m',a),
       	    (* Similar to ODDHa2 *)
-      !naDDH4 ODDHa4(m:G,j'<=nb,j<=nb) := exp(m, b[j]) = exp(g,mult(b[j'],a)),
-      !naDDH5 ODDHa5(m:G,j'<=nb,j<=na) := exp(m, a[j]) = exp(g,mult(b[j'],a)),
-      !naDDH6 ODDHa6(m:G,j'<=na,j<=nb) := exp(m, b[j]) = exp(g,mult(a[j'],a)),
-      !naDDH7 ODDHa7(m:G,j'<=na,j<=na) := exp(m, a[j]) = exp(g,mult(a[j'],a)),
+      !naDDH4 ODDHa4(m:G,j'<=nb,j<=nb) := exp'(m, b[j]) = exp'(g,mult(b[j'],a)),
+      !naDDH5 ODDHa5(m:G,j'<=nb,j<=na) := exp'(m, a[j]) = exp'(g,mult(b[j'],a)),
+      !naDDH6 ODDHa6(m:G,j'<=na,j<=nb) := exp'(m, b[j]) = exp'(g,mult(a[j'],a)),
+      !naDDH7 ODDHa7(m:G,j'<=na,j<=na) := exp'(m, a[j]) = exp'(g,mult(a[j'],a)),
             (* ODDHa4..7 are particular cases of ODDHa2 or ODDHa3, with m' = exp(g, b[j'])
 	       or m' = exp(g, a[j']).
 	       We need to consider all these forms because CryptoVerif rewrites
@@ -1279,7 +1281,7 @@ equiv gdh(exp)
              if defined(ka) then m = exp'(g, mult(b[j], a)) else false,
 	    (* ODDHa is a particular case of ODDHa1 in which can apply the CDH assumption,
 	       provided a and b[j] are not leaked. *)
-      !naDDH8 ODDHa8(m:G,j<=na) := m = exp(g,mult(a[j], a))
+      !naDDH8 ODDHa8(m:G,j<=na) := m = exp'(g,mult(a[j], a))
             (* ODDHa8 is a particular case of ODDHa1 in which we do not apply
 	       the CDH assumption, since we apply it between a's and b's *)
     ),
@@ -1287,20 +1289,20 @@ equiv gdh(exp)
       OB() := exp'(g,b), 
       Ob() := let kb:bitstring = mark in b,
       !nbDDH1 ODDHb1(m:G, m':G) := if defined(kb) then m = exp'(m', b) else 
-      		  	   find u<=na suchthat defined(a[u],ka[u]) && m' = exp(g,a[u]) then m = exp'(m', b) else
-      		  	   find u<=na suchthat defined(a[u]) && m' = exp(g,a[u]) then false else
+      		  	   find u<=na suchthat defined(a[u],ka[u]) && m' = exp'(g,a[u]) then m = exp'(m', b) else
+      		  	   find u<=na suchthat defined(a[u]) && m' = exp'(g,a[u]) then false else
                                (* by CDH, if neither a nor b[u] are leaked, then m = exp(g, a[u]*b) is impossible *)
 			   m = exp'(m', b)
 			       (* GDH allows to compute m = exp(m',a) for any m and m', without leaking a *),
-      !nbDDH2 ODDHb2(m:G,m':G,j<=nb) := exp(m, b[j]) = exp(m',b),
-      !nbDDH3 ODDHb3(m:G,m':G,j<=na) := exp(m, a[j]) = exp(m',b),
-      !nbDDH4 ODDHb4(m:G,j'<=nb,j<=nb) := exp(m, b[j]) = exp(g,mult(b[j'],b)),
-      !nbDDH5 ODDHb5(m:G,j'<=nb,j<=na) := exp(m, a[j]) = exp(g,mult(b[j'],b)),
-      !nbDDH6 ODDHb6(m:G,j'<=na,j<=nb) := exp(m, b[j]) = exp(g,mult(a[j'],b)),
-      !nbDDH7 ODDHb7(m:G,j'<=na,j<=na) := exp(m, a[j]) = exp(g,mult(a[j'],b)),
+      !nbDDH2 ODDHb2(m:G,m':G,j<=nb) := exp'(m, b[j]) = exp'(m',b),
+      !nbDDH3 ODDHb3(m:G,m':G,j<=na) := exp'(m, a[j]) = exp'(m',b),
+      !nbDDH4 ODDHb4(m:G,j'<=nb,j<=nb) := exp'(m, b[j]) = exp'(g,mult(b[j'],b)),
+      !nbDDH5 ODDHb5(m:G,j'<=nb,j<=na) := exp'(m, a[j]) = exp'(g,mult(b[j'],b)),
+      !nbDDH6 ODDHb6(m:G,j'<=na,j<=nb) := exp'(m, b[j]) = exp'(g,mult(a[j'],b)),
+      !nbDDH7 ODDHb7(m:G,j'<=na,j<=na) := exp'(m, a[j]) = exp'(g,mult(a[j'],b)),
       !nbDDH ODDHb(m:G, j<=na) := find u<=na suchthat defined(ka[u],a[u]) && a[j] = a[u] then m = exp'(g, mult(a[j], b)) else 
                             if defined(kb) then m = exp'(g, mult(a[j], b)) else false,
-      !nbDDH8 ODDHb8(m:G,j<=nb) := m = exp(g,mult(b[j], b))
+      !nbDDH8 ODDHb8(m:G,j<=nb) := m = exp'(g,mult(b[j], b))
     ).
 
     (* We need to consider both forms m = exp(m', a) and m = exp(g,

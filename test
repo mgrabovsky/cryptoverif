@@ -115,7 +115,7 @@ echo
 echo ORACLES FRONTEND
 echo
 
-for i in examplesnd/otest/* implementation/nspk/nspk3tbl.ocv implementation/ssh/ssh.ocv implementation/ssh/ssh-secrecy-key-*.ocv
+for i in examplesnd/otest/* examplesnd/arinc823/*.ocv implementation/nspk/nspk3tbl.ocv implementation/ssh/ssh.ocv implementation/ssh/ssh-secrecy-key-*.ocv
 do
     if [ -f $i ]
     then

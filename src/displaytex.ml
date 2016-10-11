@@ -1094,7 +1094,41 @@ let display_move_set = function
 let display_bl_assoc bl_assoc =
   display_list display_binder bl_assoc
 
-let rec display_query1 = function
+let display_user_info = function
+    VarList(l,stop) ->
+      display_list display_binder l;
+      if stop then print_string "."
+  | Detailed(vmopt,tmopt) ->
+      begin
+      match vmopt with
+	None -> ()
+      | Some(vm,vl,stop) ->
+	  print_string "\\text{variables: }";
+	  display_list (fun (b1,b2) -> display_binder b1; print_string " \\rightarrow "; display_binder b2) vm;
+	  if vm != [] && vl != [] then print_string ", ";
+	  display_list display_binder vl;
+	  if stop then print_string ".";
+	  if tmopt != None then print_string ";"
+      end;
+      begin
+      match tmopt with
+	None -> ()
+      | Some(tm,stop) ->
+	  print_string "\\text{terms: }";
+	  display_list (fun (occ,t) -> print_int occ; print_string " \\rightarrow "; display_term t) tm;
+	  if stop then print_string "."
+      end
+	      
+    
+let display_with_user_info user_info =
+  match user_info with
+    VarList([],_) | Detailed((None | Some([],[],_)), (None | Some([],_))) -> ()
+  | _ ->
+      print_string "with $";
+      display_user_info user_info;
+      print_string "$"
+
+ let rec display_query1 = function
     [] -> Parsing_helper.internal_error "List should not be empty"
   | [b,t] -> 
       if b then print_string "\\kw{inj}:";
@@ -1175,15 +1209,10 @@ let display_instruct = function
       print_string "SA rename $";
       display_binder b;
       print_string "$"
-  | CryptoTransf(e, bl_assoc) -> 
+  | CryptoTransf(e, user_info) -> 
       print_string "equivalence ";
       display_equiv_with_name e;
-      if bl_assoc != [] then 
-	begin
-	  print_string "with $";
-	  display_bl_assoc bl_assoc;
-	  print_string "$"
-	end
+      display_with_user_info user_info
   | InsertEvent(s,occ) ->
       print_id "insert event $\\kwf{" s "}$";
       print_string (" at occurrence " ^ (string_of_int occ))
@@ -1684,15 +1713,10 @@ let display_detailed_ins = function
       print_string "\\quad -- Move assignment to $";
       display_binder b;
       print_string "$\\\\\n"      
-  | DCryptoTransf(e, bl_assoc) ->
+  | DCryptoTransf(e, user_info) ->
       print_string "\\quad -- Equivalence ";
       display_equiv_with_name e;
-      if bl_assoc != [] then
-	begin
-	  print_string "with $";
-	  display_bl_assoc bl_assoc;
-	  print_string "$"
-	end;
+      display_with_user_info user_info;
       print_string "\\\\\n"
   | DInsertEvent _  | DInsertInstruct _ 
   | DReplaceTerm _  | DMergeArrays _ ->

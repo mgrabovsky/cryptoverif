@@ -504,6 +504,19 @@ and merge_mode =
   | MCreateBranchVarAtProc of process list * repl_index list
   | MCreateBranchVarAtTerm of term list * repl_index list
 
+(* User info for cryptographic transformation *)
+
+and var_mapping = (binder(*variable in game*) * binder(*variable in equivalence*)) list * 
+      binder(*variable in game, when the corresponding variable in equivalence is not known*) list * bool
+    (* bool is true when the list ends with "."
+       no other variable should be added by the transformation in this case *)
+and term_mapping = (int(*occurrence in game*) * term(*oracle in equivalence*)) list * bool
+
+and crypto_transf_user_info =
+    VarList of binder list * bool (* bool is true when the list ends with "."
+				    no other variable should be added by the transformation in this case *)
+  | Detailed of var_mapping option * term_mapping option
+	
 and instruct =
     ExpandIfFindGetInsert
   | Simplify of string list(*occurrences, variables, or types for collision elimination of password types*)
@@ -511,7 +524,7 @@ and instruct =
   | RemoveAssign of rem_set
   | SArenaming of binder
   | MoveNewLet of move_set
-  | CryptoTransf of equiv_nm * binder list
+  | CryptoTransf of equiv_nm * crypto_transf_user_info
   | InsertEvent of string(*event name*) * int(*occurrence of insertion*) 
   | InsertInstruct of string(*instruction*) * Parsing_helper.extent * int (*occurrence of insertion*) * Parsing_helper.extent
   | ReplaceTerm of string(*term*) * Parsing_helper.extent * int (*occurrence of replacement*) * Parsing_helper.extent
@@ -595,7 +608,7 @@ and detailed_instruct =
   | DSArenaming of binder * binder list
   | DMoveNew of binder
   | DMoveLet of binder
-  | DCryptoTransf of equiv_nm * binder list
+  | DCryptoTransf of equiv_nm * crypto_transf_user_info
   | DInsertEvent of funsymb(*event name*) * int(*occurrence of insertion*) 
   | DInsertInstruct of string * int (*occurrence of insertion*)
   | DReplaceTerm of term * term * int (*occurrence of replacement*)
@@ -629,9 +642,10 @@ type failure_reason =
   | NoUsefulChange
   | NameNeededInStopMode
 
+
 type trans_res =
     TSuccess of setf list * detailed_instruct list * game
-  | TFailure of (equiv_nm * binder list * instruct list) list * (binder list * failure_reason) list
+  | TFailure of (equiv_nm * crypto_transf_user_info * instruct list) list * ((binder * binder) list * failure_reason) list
 
 type simp_facts = term list * term list * elsefind_fact list
 type dep_anal = simp_facts -> term -> term -> term option
@@ -645,3 +659,4 @@ exception Contradiction
 type impl_opt = Read of binder * string | Write of binder * string 
 
 type impl_process = string * impl_opt list * inputprocess
+

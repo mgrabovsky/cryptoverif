@@ -50,6 +50,7 @@ knowledge of the CeCILL-B license and that you accept its terms.
 
 proof {
 set maxIterSimplif = 3;
+set uniqueBranchReorganize = false;
 show_game occ;
 insert 261 "let concat(x1,x2,x3,x4,x5) = h1x in"; (* just after OH1(..):= *)
 crypto rom(h1);
@@ -68,20 +69,22 @@ insert 1037 "let concat(x01,x02,x03,x04,x05) = h0x in"; (* just after OH0(..) :=
 crypto rom(h0);
 SArename Y_u;
 auto;
+set uniqueBranchReorganize = true;
 show_game;
-move array "@7_X_731"; (* variable chosen at the end of OC2 and not used immediately *)
+move array "@7_X_717"; (* variable chosen at the end of OC2 and not used immediately *)
 move binder "@12_r_179";
-merge_arrays "@7_X_727" "@2_Y_734";
+show_game;
+merge_arrays "@7_X_713" "@2_Y_720";
 merge_branches;
-move array "@7_X_728"; (* variable chosen in OP and not used immediately *)
+move array "@7_X_714"; (* variable chosen in OP and not used immediately *)
 (*show_game;
-merge_arrays "@7_X_727" "@2_Y_746";
+merge_arrays "@7_X_713" "@2_Y_746";
 merge_branches;*)
-move array "@7_X_730"; (* variable chosen in OS1 and not used immediately *)
+move array "@7_X_716"; (* variable chosen in OS1 and not used immediately *)
 (*show_game;
-merge_arrays "@7_X_727" "@2_Y_759";*)
+merge_arrays "@7_X_713" "@2_Y_759";*)
 show_game occ;
-insert 110 "find jh' <= qH1, jd <= qD suchthat defined(x1[jh'], x2[jh'], x3[jh'], x4[jh'], @12_r_185[jh'], m[jd], kd[jd], @7_X_727[jd]) && (m[jd] = @9_re_234) && (U = x1[jh']) && (S = x2[jh']) && (X_s = x3[jh']) && (x4[jh'] = @7_X_727[jd]) && (auth_s = @12_r_185[jh'])  && (kd[jd] = pw) then";
+insert 110 "find jh' <= qH1, jd <= qD suchthat defined(x1[jh'], x2[jh'], x3[jh'], x4[jh'], @12_r_185[jh'], m[jd], kd[jd], @7_X_713[jd]) && (m[jd] = @9_re_234) && (U = x1[jh']) && (S = x2[jh']) && (X_s = x3[jh']) && (x4[jh'] = @7_X_713[jd]) && (auth_s = @12_r_185[jh'])  && (kd[jd] = pw) then";
 show_game occ;
 insert_event Auth2 157;
 simplify;

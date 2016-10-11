@@ -234,3 +234,15 @@ type env_entry =
   | EProcess of process_e
   | ETable of Types.table
 
+(* User info for cryptographic transformation *)
+
+type var_term_mapping =
+    PVarMapping of ident(*"variables"*) * (ident(*variable in game*) * ident(*variable in equivalence*)) list * bool (* bool is true when the list ends with "."
+				    no other variable should be added by the transformation in this case *)
+  | PTermMapping of ident(*"terms"*) * (int(*occurrence in game*) * ident(*oracle in equivalence*)) list * bool
+
+type crypto_transf_user_info =
+    PRepeat
+  | PVarList of ident list * bool (* bool is true when the list ends with "."
+				    no other variable should be added by the transformation in this case *)
+  | PDetailed of var_term_mapping list 

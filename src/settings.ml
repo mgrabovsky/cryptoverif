@@ -67,6 +67,7 @@ let debug_simplify = ref false
 let debug_elsefind_facts = ref false
 let debug_simplif_add_facts = ref false
 
+let max_depth_add_fact = ref 1000
 let elsefind_facts_in_replace = ref true
 let max_replace_depth = ref 20
 let elsefind_facts_in_success = ref true
@@ -210,6 +211,7 @@ let do_set p v =
   | "elsefindFactsInSimplify", S ("true",_) -> elsefind_facts_in_simplify := true
   | "elsefindFactsInSimplify", S ("false",_) -> elsefind_facts_in_simplify := false
   | "maxReplaceDepth", I n -> max_replace_depth := n
+  | "maxAddFactDepth", I n -> max_depth_add_fact := n
   | "debugInstruct", S ("true",_) -> debug_instruct := true
   | "debugInstruct", S ("false",_) -> debug_instruct := false
   | "debugFindUnique", S ("true",_) -> debug_find_unique := true

@@ -46,9 +46,6 @@ knowledge of the CeCILL-B license and that you accept its terms.
 *)
 type extent
 
-exception IllegalCharacter
-exception IllegalEscape
-exception UnterminatedString
 exception Error of string * extent
 
 val accept_arobase : bool ref

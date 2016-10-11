@@ -118,7 +118,7 @@ rule token = parse
 	   Hashtbl.find keyword_table s
          with Not_found ->
 	   if (not (!accept_arobase)) && (String.contains s '@') then
-	     raise IllegalCharacter;
+	     raise (Error("Illegal character", extent lexbuf));
            IDENT (s, extent lexbuf)
      }
 | '\"'
@@ -131,7 +131,7 @@ rule token = parse
       try 
         INT (int_of_string(Lexing.lexeme lexbuf))
       with Failure _ ->
-	input_error "Incorrect integer" (extent lexbuf)
+	raise (Error("Incorrect integer", extent lexbuf))
     }
 | ([ '0'-'9' ]) + '.' ([ '0'-'9' ])+
      { FLOAT (float_of_string(Lexing.lexeme lexbuf)) }
@@ -171,7 +171,7 @@ rule token = parse
 | '>' { WRITE }
 | '#' { COUNT }
 | eof { EOF }	
-| _ { raise IllegalCharacter }
+| _ { raise (Error("Illegal character", extent lexbuf)) }
 
 and comment = parse
 | "*)" { }
@@ -188,9 +188,9 @@ and string = parse
         string lexbuf
       }
 | '\\' _
-      { raise IllegalEscape }
+      { raise (Error("Illegal escape", extent lexbuf)) }
 | eof 
-      { raise UnterminatedString }
+      { raise (Error("Unterminated string", extent lexbuf)) }
 | _ 
       { 
         add_char (Lexing.lexeme_char lexbuf 0);

@@ -94,7 +94,7 @@ let display_failure_reason = function
   | NoChange ->
       print_string "Nothing transformed\n"
   | NoChangeName bn ->
-      print_string ("Nothing transformed using the suggested name " ^ (Display.binder_to_string bn) ^ "\n")
+      print_string ("Nothing transformed using the suggested random variable " ^ (Display.binder_to_string bn) ^ "\n")
   | NoUsefulChange ->
       print_string "The transformation did not use the useful_change oracles, or oracles deemed useful by default.\n"
   | NameNeededInStopMode ->
@@ -247,6 +247,10 @@ let incompatible_defs p =
 let stop_mode = ref false
 let no_advice_mode = ref false
 
+let gameeq_name_mapping = ref []
+let no_other_term = ref false
+let user_term_mapping = ref None    
+    
 (* In case we fail to apply the crypto transformation, we raise the
 exception NoMatch, like when matching fails. This facilitates the
 interaction with the matching functions, which are used as part of the
@@ -277,6 +281,8 @@ let rec check_no_new_event t =
 	check_no_new_event t1;
 	check_no_new_event t2) l0
   | ResE _ | EventAbortE _ ->
+      if (!Settings.debug_cryptotransf) > 4 then 
+	print_string "The transformed expression occurs in a condition of find, and the transformation may introduce new or event.\n";
       raise NoMatch
 
 and check_no_new_event_pat = function
@@ -360,7 +366,12 @@ let check_distinct_links lhs_array_ref_map bl =
     try
       match assq_binder_binderref b lhs_array_ref_map with
 	{ t_desc = Var(b',l) } -> 
-	  if (List.memq b' (!seen_binders)) then raise NoMatch;
+	  if (List.memq b' (!seen_binders)) then 
+	    begin
+	      if (!Settings.debug_cryptotransf) > 4 then 
+		print_string "check_distinct_links fails.\n";
+	      raise NoMatch
+	    end;
 	  seen_binders := b' :: (!seen_binders)
       | _ -> Parsing_helper.internal_error "unexpected link in check_distinct_links"
     with Not_found ->
@@ -387,7 +398,7 @@ let explicit_value b =
 (*
 ins_accu stores the advised instructions. 
 The structure is the following:
-   a list of pairs (list of advised instructions, priority, names_to_discharge)
+   a list of triples (list of advised instructions, priority, names_to_discharge)
 The priority is an integer; the lower integer means the higher priority.
 The elements of the list are always ordered by increasing values of priority. 
 The transformation may succeed by applying one list of advised instructions.
@@ -677,14 +688,28 @@ let rec check_instance_of_rec simp_facts all_names_exp_opt mode next_f term t st
 			  then
 			    next_f { state with advised_ins = Terms.add_eq (explicit_value b') state.advised_ins }
 			  else
-			    raise NoMatch
+			    begin
+			      if (!Settings.debug_cryptotransf) > 6 then
+				print_string ("Variable " ^ (Display.binder_to_string b') ^ " should be defined by a restriction.\n");
+			      raise NoMatch
+			    end
 			end
 		      else 
 			begin
                           (* check that b' is of the right type *)
-			  if b'.btype != b.btype then raise NoMatch; 
+			  if b'.btype != b.btype then
+			    begin
+			      if (!Settings.debug_cryptotransf) > 6 then
+				print_string ("Variable " ^ (Display.binder_to_string b') ^ " should have type " ^ b.btype.tname ^ " but has type " ^ b'.btype.tname ^ ".\n");
+			      raise NoMatch
+			    end; 
 		          (* check that b' is not used in a query *)
-			  if Settings.occurs_in_queries b' then raise NoMatch;
+			  if Settings.occurs_in_queries b' then 
+			    begin
+			      if (!Settings.debug_cryptotransf) > 6 then
+				print_string ("Variable " ^ (Display.binder_to_string b') ^ " occurs in queries.\n");
+			      raise NoMatch
+			    end;
 
 			  let state' = { state with lhs_array_ref_map = ((b,l), t):: state.lhs_array_ref_map } in
                           (* Note: when I catch NoMatch, backtrack on names_to_discharge *)
@@ -694,14 +719,22 @@ let rec check_instance_of_rec simp_facts all_names_exp_opt mode next_f term t st
 			      let bopt' = List.assq b' (!names_to_discharge) in
 			      if !bopt' == DontKnow then bopt' := bopt else
 			      if !bopt' != bopt then
+				begin
 				(* Incompatible options [unchanged]. May happen when the variable occurs in an event 
 				   (so its option [unchanged] is required), but later we see that it does not have option [unchanged] *) 
-				raise NoMatch;
+				  if (!Settings.debug_cryptotransf) > 6 then
+				    print_string ("Variable " ^ (Display.binder_to_string b') ^ " occurs in some event and may be changed by the cryptographic transformation.\n");
+				  raise NoMatch
+				end;
 			      { state' with sthg_discharged = true }
                             with Not_found ->
 			      if !stop_mode then 
+				begin
 				(* Do not add more names in stop_mode *)
-				raise NoMatch
+				  if (!Settings.debug_cryptotransf) > 6 then
+				    print_string ("Cannot add variable " ^ (Display.binder_to_string b') ^ " in stop mode.\n");
+				  raise NoMatch
+				end
 			      else
 				add_name_to_discharge2 (b',ref bopt) state'
 			  in
@@ -709,7 +742,17 @@ let rec check_instance_of_rec simp_facts all_names_exp_opt mode next_f term t st
 			  try
                             let indexes = assq_binderref (group_head, l) state''.name_indexes in
                             if not (Terms.equal_term_lists indexes l') then
-			      raise NoMatch
+			      begin
+				if (!Settings.debug_cryptotransf) > 6 then
+				  begin
+				    print_string ("Indices of " ^ (Display.binder_to_string b') ^ " are ");
+				    Display.display_list Display.display_term l';
+				    print_string " but should be ";
+				    Display.display_list Display.display_term indexes;
+				    print_string ".\n"
+				  end;
+				raise NoMatch
+			      end
 			    else
 			      next_f state''
 			  with Not_found -> 
@@ -722,7 +765,15 @@ let rec check_instance_of_rec simp_facts all_names_exp_opt mode next_f term t st
                 begin
                   (* check that t is of the right type *)
                   if t.t_type != b.btype then
-                    raise NoMatch; 
+		    begin
+		      if (!Settings.debug_cryptotransf) > 6 then
+			begin
+			  print_string "Term ";
+			  Display.display_term t;
+			  print_string (" should have type " ^ b.btype.tname ^ " but has type " ^ t.t_type.tname ^ ".\n")
+			end;
+		      raise NoMatch
+		    end; 
 		  next_f { state with lhs_array_ref_map = ((b,l), t):: state.lhs_array_ref_map }
                 end
             end
@@ -753,14 +804,28 @@ let rec check_instance_of_rec simp_facts all_names_exp_opt mode next_f term t st
 			  then
 			    next_f { state with advised_ins = Terms.add_eq (explicit_value b') state.advised_ins }
 			  else
-			    raise NoMatch
+			    begin
+			      if (!Settings.debug_cryptotransf) > 6 then
+				print_string ("Variable " ^ (Display.binder_to_string b') ^ " should be defined by a restriction.\n");
+			      raise NoMatch
+			    end
 			end
 		      else 
 			begin
                           (* check that b' is of the right type *)
-			  if b'.btype != b.btype then raise NoMatch; 
+			  if b'.btype != b.btype then 
+			    begin
+			      if (!Settings.debug_cryptotransf) > 6 then
+				print_string ("Variable " ^ (Display.binder_to_string b') ^ " should have type " ^ b.btype.tname ^ " but has type " ^ b'.btype.tname ^ ".\n");
+			      raise NoMatch
+			    end; 
 		          (* check that b' is not used in a query *)
-			  if Settings.occurs_in_queries b' then raise NoMatch;
+			  if Settings.occurs_in_queries b' then 
+			    begin
+			      if (!Settings.debug_cryptotransf) > 6 then
+				print_string ("Variable " ^ (Display.binder_to_string b') ^ " occurs in queries.\n");
+			      raise NoMatch
+			    end;
 
 			  let state' = { state with lhs_array_ref_map = ((b,l), t)::state.lhs_array_ref_map } in
                           (* Note: when I catch NoMatch, backtrack on names_to_discharge *)
@@ -774,21 +839,39 @@ let rec check_instance_of_rec simp_facts all_names_exp_opt mode next_f term t st
 				let bopt' = List.assq b' (!names_to_discharge) in
 				if !bopt' == DontKnow then bopt' := bopt else
 				if !bopt' != bopt then
+				  begin
 				  (* Incompatible options [unchanged]. May happen when the variable occurs in an event 
 				     (so its option [unchanged] is required), but later we see that it does not have option [unchanged] *) 
-				  raise NoMatch;
+				    if (!Settings.debug_cryptotransf) > 6 then
+				      print_string ("Variable " ^ (Display.binder_to_string b') ^ " occurs in some event and may be changed by the cryptographic transformation.\n");
+				    raise NoMatch
+				  end;
 				{ state' with sthg_discharged = true }
                               with Not_found ->
 				if !stop_mode then 
+				  begin
 				  (* Do not add more names in stop_mode *)
-				  raise NoMatch
+				    if (!Settings.debug_cryptotransf) > 6 then
+				      print_string ("Cannot add variable " ^ (Display.binder_to_string b') ^ " in stop mode.\n");
+				    raise NoMatch
+				  end
 				else
 				  add_name_to_discharge2 (b',ref bopt) state'
 			    in
 			    try
                               let indexes = assq_binderref (group_head,l) state''.name_indexes in
                               if not (Terms.equal_term_lists indexes l') then
-				raise NoMatch
+				begin
+				  if (!Settings.debug_cryptotransf) > 6 then
+				    begin
+				      print_string ("Indices of " ^ (Display.binder_to_string b') ^ " are ");
+				      Display.display_list Display.display_term l';
+				      print_string " but should be ";
+				      Display.display_list Display.display_term indexes;
+				      print_string ".\n"
+				    end;
+				  raise NoMatch
+				end
 			      else
 				next_f state''
 			    with Not_found -> 
@@ -831,7 +914,7 @@ let check_instance_of simp_facts next_f comp_neut all_names_exp_opt mode term t 
     if not state.sthg_discharged then raise NoMatch;
     if state.advised_ins == [] then
       check_distinct_links state.lhs_array_ref_map all_names_exp_opt;
-    if (!Settings.debug_cryptotransf) > 5 then
+    if (!Settings.debug_cryptotransf) > 4 then
       begin
 	print_string "check_instance_of ";
 	Display.display_term term;
@@ -1096,7 +1179,10 @@ let rec reverse_subst indexes cur_array t =
       Terms.build_term2 t 
 	(match t.t_desc with
 	  Var(b,l) -> Var(b, reverse_subst_index indexes cur_array l)
-	| ReplIndex _ -> raise NoMatch 
+	| ReplIndex _ -> 
+	    if (!Settings.debug_cryptotransf) > 4 then 
+	      print_string "reverse_subst failed\n";
+	    raise NoMatch 
 	| FunApp(f,l) -> FunApp(f, List.map (reverse_subst indexes cur_array) l)
 	| TestE _ | LetE _ | FindE _ | ResE _ | EventAbortE _ -> 
 	    Parsing_helper.internal_error "If, find, let, new, and event should have been expanded (Cryptotransf.reverse_subst)")
@@ -1199,7 +1285,15 @@ let display_mapping () =
     print_string "Exp:\n";
     List.iter (fun exp -> 
       Display.display_term exp.source_exp_instance; print_newline();
-	) mapping.expressions;
+      if exp.before_transfo_array_ref_map != [] then
+	begin
+	  print_string "  Name mapping: ";
+	  Display.display_list (fun ((b,l),(b',l')) -> Display.display_var b l;
+	    print_string " -> ";
+	    Display.display_var b' l') exp.before_transfo_array_ref_map;
+	  print_newline()
+	end
+	    ) mapping.expressions;
     print_string "Source exp: ";
     Display.display_term mapping.source_exp;
     print_newline();
@@ -1212,6 +1306,9 @@ let display_mapping () =
   print_newline()
 
 let equiv = ref (((NoName,[],[],[],StdEqopt,Decisional),[]) : equiv_nm)
+let equiv_names_lhs_opt = ref []
+let equiv_names_lhs = ref []
+let equiv_names_lhs_flat = ref []
 
 let whole_game = ref { proc = Terms.iproc_from_desc Nil; game_number = -1; current_queries = [] }
 let whole_game_next = ref { proc = Terms.iproc_from_desc Nil; game_number = -1; current_queries = [] }
@@ -1352,14 +1449,24 @@ let check_same_args_at_creation = function
   | (a::l) -> 
       if not (List.for_all (fun b -> 
 	(Terms.equal_lists (==) b.args_at_creation a.args_at_creation)) l)
-	  then raise NoMatch
+      then 
+	begin
+	  if (!Settings.debug_cryptotransf) > 4 then 
+	    print_string "The LHS of the equivalence requires the same indices (= args at creation), the game uses different indices.\n";
+	  raise NoMatch
+	end
 
 (* l1 and l2 are tables [[(binder in equiv, corresponding name);...];...]
    common_names return the number of name groups in common between l1 and l2 *)
 
 let all_diff l1 l2 =
   if not (List.for_all (fun b -> not (List.memq b (List.map snd (List.concat l1))))
-    (List.map snd (List.concat l2))) then raise NoMatch
+    (List.map snd (List.concat l2))) then 
+    begin
+      if (!Settings.debug_cryptotransf) > 4 then 
+	print_string "Some random variables are common but not all.\n";
+      raise NoMatch
+    end
 
 let rec common_names_rev l1 l2 =
   match l1,l2 with
@@ -1420,9 +1527,19 @@ let rec check_compatible name_indexes env rev_subst_name_indexes names_exp name_
      name_table_first::name_table_rest) ->
        (* Complete the environment env if compatible *)
        List.iter2 (fun b1 (b,b') ->
-	 if b != b1 then raise NoMatch;
+	 if b != b1 then
+	   begin
+	     if (!Settings.debug_cryptotransf) > 4 then 
+	       print_string "Check compatible failed(1).\n";
+	     raise NoMatch
+	   end;
 	 try 
-	   if (get_name b1 (!env)) != b' then raise NoMatch
+	   if (get_name b1 (!env)) != b' then
+	     begin
+	       if (!Settings.debug_cryptotransf) > 4 then 
+		 print_string "Check compatible failed(2).\n";
+	       raise NoMatch
+	     end
 	 with Not_found ->
 	   env := (b,Terms.term_from_binder b') :: (!env)) names_exp_first name_table_first;
        (* Complete the indexes name_indexes if needed
@@ -1515,14 +1632,22 @@ let rec get_def_vars accu t =
       get_def_vars_pat (get_def_vars (get_def_vars accu' t1) t2) pat
   | ResE(b,t) ->
       if List.memq b accu then 
-	raise NoMatch;
+	begin
+	    if (!Settings.debug_cryptotransf) > 4 then 
+	      print_string "Variable defined several times (1).\n";
+	  raise NoMatch
+	end;
       get_def_vars (b::accu) t
   | FindE(l0,t3,_) ->
       let accu' = get_def_vars accu t3 in
       List.fold_left (fun accu (bl,_,t1,t2) ->
 	let vars = List.map fst bl in
 	if List.exists (fun b -> List.memq b accu) vars then
-	  raise NoMatch;
+	  begin
+	    if (!Settings.debug_cryptotransf) > 4 then 
+	      print_string "Variable defined several times (2).\n";
+	    raise NoMatch
+	  end;
 	get_def_vars (get_def_vars (vars @ accu) t1) t2) accu' l0
   | EventAbortE(f) ->
       accu
@@ -1530,7 +1655,11 @@ let rec get_def_vars accu t =
 and get_def_vars_pat accu = function
     PatVar b ->
       if List.memq b accu then 
-	raise NoMatch;
+	begin
+	  if (!Settings.debug_cryptotransf) > 4 then 
+	    print_string "Variable defined several times (3).\n";
+	  raise NoMatch
+	end;
       b::accu
   | PatTuple(_,l) ->
       List.fold_left get_def_vars_pat accu l
@@ -1577,6 +1706,25 @@ type 'a check_res =
   | AdviceNeeded of to_do_t
   | NotComplete of to_do_t
 
+let add_gameeq_name_mapping before_transfo_restr exp =
+    (* Check the compatibility of the name mapping of the new expression
+       with the one given by the user and the name mapping of previous expressions *)
+  List.iter (fun ((b,_),(b',_)) ->
+    try
+      if (List.assq b' (!gameeq_name_mapping)) != b then
+	Parsing_helper.internal_error "Game mapping incompatibility should have been detected earlier (1)"
+    with Not_found ->
+      gameeq_name_mapping := (b',b)::(!gameeq_name_mapping)
+					) exp.before_transfo_array_ref_map;
+  List.iter (fun (b,b') ->
+    try
+      if (List.assq b' (!gameeq_name_mapping)) != b then 
+	Parsing_helper.internal_error "Game mapping incompatibility should have been detected earlier (2)"
+    with Not_found ->
+      gameeq_name_mapping := (b',b)::(!gameeq_name_mapping)	  
+					) before_transfo_restr
+
+	
 let rec checks all_names_lhs (ch, (restr_opt, args, res_term), (restr_opt', repl', args', res_term'), mode, priority) 
     product_rest where_info cur_array defined_refs t state =
   let restr = List.map (List.map fst) restr_opt in
@@ -1667,7 +1815,11 @@ let rec checks all_names_lhs (ch, (restr_opt, args, res_term), (restr_opt', repl
       List.iter (fun ((b2,l2), (b2',_)) ->
 	if (Terms.equal_term_lists l1 l2) &&
 	  not (Terms.equal_lists (==) b1'.args_at_creation b2'.args_at_creation) then
-	  raise NoMatch
+	  begin
+	    if (!Settings.debug_cryptotransf) > 4 then 
+	      print_string "The LHS of the equivalence requires the same indices (explicit indices), the game uses different indices.\n";
+	    raise NoMatch
+	  end
 	    ) before_transfo_array_ref_map
 	) before_transfo_array_ref_map;
 	
@@ -1717,6 +1869,59 @@ let rec checks all_names_lhs (ch, (restr_opt, args, res_term), (restr_opt', repl
        Otherwise, raise NoMatch *)
     let rev_subst_name_indexes = rev_subst_indexes None before_transfo_name_table indexes_ordered in
 	
+    (* Check the compatibility of the name mapping of the new expression
+       with the one given by the user and the one of previous expressions,
+       recorded in gameeq_name_mapping *)
+    begin
+      let vm = !gameeq_name_mapping in
+      List.iter (fun ((b,_),(b',_)) ->
+	try
+	  let b1 = List.assq b' vm in
+	  if b1 != b then
+	    begin
+	      if (!Settings.debug_cryptotransf) > 4 then 
+		print_string ("Variable " ^ (Display.binder_to_string b') ^ 
+			      " of the game, associated to " ^ (Display.binder_to_string b) ^ 
+			      " in the LHS of the equivalence, but it should be associated to " ^ (Display.binder_to_string b1) ^ " (1).\n");
+	      raise NoMatch
+	    end
+	with Not_found -> ()
+	    ) before_transfo_array_ref_map;
+      List.iter (fun (b,b') ->
+	try
+	  let b1 = List.assq b' vm in
+	  if b1 != b then 
+	    begin
+	      if (!Settings.debug_cryptotransf) > 4 then 
+		print_string ("Variable " ^ (Display.binder_to_string b') ^ 
+			      " of the game, associated to " ^ (Display.binder_to_string b) ^ 
+			      " in the LHS of the equivalence, but it should be associated to " ^ (Display.binder_to_string b1) ^ " (2).\n");
+	      raise NoMatch
+	    end
+	with Not_found -> ()
+	    ) before_transfo_restr
+    end;
+
+   (* We check the compatibility of array references for the current expression
+       if ((b,_),(b',_)) in before_transfo_array_ref_map, and
+       if (b1,b') in before_transfo_restr, then b1 = b.
+       This point is implied by the final checks performed in
+       check_lhs_array_ref, but performing it earlier allows to backtrack
+       and choose other expressions *)
+    
+    List.iter (fun ((b,_),(b',_)) ->
+      List.iter (fun (b1, b1') ->
+	if b1' == b' && b1 != b then 
+	  begin
+	    if (!Settings.debug_cryptotransf) > 4 then 
+	      print_string ("Variable " ^ (Display.binder_to_string b') ^ 
+			    " of the game, associated to both " ^ (Display.binder_to_string b) ^ 
+			    " and " ^ (Display.binder_to_string b1) ^ " in the LHS of the equivalence.\n");
+	    raise NoMatch
+	  end
+	    ) before_transfo_restr
+      ) before_transfo_array_ref_map;
+
     (* Common names with other expressions
        When two expressions use a common name, 
        - the common names must occur at the same positions in the equivalence
@@ -1725,6 +1930,7 @@ let rec checks all_names_lhs (ch, (restr_opt, args, res_term), (restr_opt', repl
        *)
     let longest_common_suffix = ref 0 in
     let exp_for_longest_common_suffix = ref None in
+    (*if (!Settings.debug_cryptotransf) > 4 then display_mapping();*)
     List.iter (fun mapping ->
       let name_table_rev = List.rev before_transfo_name_table in
       let map_name_table_rev = List.rev mapping.before_transfo_name_table in
@@ -1736,50 +1942,18 @@ let rec checks all_names_lhs (ch, (restr_opt, args, res_term), (restr_opt', repl
 	  let common_rev_subst_name_indexes1 = Terms.lsuffix (new_common_suffix - 1) rev_subst_name_indexes in
 	  let common_rev_subst_name_indexes2 = Terms.lsuffix (new_common_suffix - 1) mapping.rev_subst_name_indexes in
 	  if not (List.for_all2 (fun (_,r1) (_,r2) -> Terms.equal_term_lists r1 r2) common_rev_subst_name_indexes1 common_rev_subst_name_indexes2) then
-	    raise NoMatch
+	    begin
+	      if (!Settings.debug_cryptotransf) > 4 then 
+		print_string "The function that computes the indexes of above random variables from the indexes of the lowest common random variable is not the same.\n";
+	      raise NoMatch
+	    end
 	end;
       if new_common_suffix > (!longest_common_suffix) then
 	begin
 	  longest_common_suffix := new_common_suffix;
 	  exp_for_longest_common_suffix := Some mapping
-	end;
-      
-      (* We check the compatibility of array references
-	 - new array references in the current expression:
-	 if ((b,_),(b',_)) in before_transfo_array_ref_map, then 
-	 occurrences of b' in another expression must be mapped also to b
-	 - if (b,b') in before_transfo_restr, then occurrences of b'
-	 in array references in another expression must be mapped also to b
-	 These two points are implied by the final checks performed in
-	 check_lhs_array_ref, but performing them earlier allows to backtrack
-	 and choose other expressions
-	       *)
-      List.iter (fun ((b,_),(b',_)) ->
-	List.iter (fun (b1, b1') ->
-	  if b1' == b' && b1 != b then raise NoMatch
-	      ) before_transfo_restr;
-	List.iter (fun (b1, b1') ->
-	  if b1' == b' && b1 != b then raise NoMatch
-	      ) mapping.before_transfo_restr;
-	List.iter (fun exp ->
-	  List.iter (fun ((b1,_),(b1',_)) ->
-	    if b1' == b' && b1 != b then raise NoMatch
-		) exp.before_transfo_array_ref_map
-	    ) mapping.expressions
-		(* TO DO Should I advise SArename b' when one these checks fails?
-		   With the current situation, this is unlikely to help: 
-		   the two elements of a DH product come normally from
-		   distinct restrictions from the start. *)
-	  ) before_transfo_array_ref_map;
-      
-      List.iter (fun (b, b') ->
-	List.iter (fun exp ->
-	  List.iter (fun ((b1,_),(b1',_)) ->
-	    if b1' == b' && b1 != b then raise NoMatch
-		) exp.before_transfo_array_ref_map
-	    ) mapping.expressions
-	  ) before_transfo_restr
-	
+	end
+	  
 	) (!map);
     
     let after_transfo_table_builder nt r = 
@@ -1844,7 +2018,11 @@ let rec checks all_names_lhs (ch, (restr_opt, args, res_term), (restr_opt', repl
 	Terms.array_ref_eqside rm;
 	let def_vars = get_def_vars [] res_term' in
 	if List.exists Terms.has_array_ref def_vars then
-	      raise NoMatch;
+	  begin
+	    if (!Settings.debug_cryptotransf) > 4 then 
+	      print_string "The transformed term occurs in a condition of find, and the transformation may create finds on variables defined in the condition of find.\n";
+	    raise NoMatch
+	  end;
 	Terms.cleanup_array_ref();
 	check_no_new_event res_term'
       end;
@@ -1889,9 +2067,29 @@ let rec checks all_names_lhs (ch, (restr_opt, args, res_term), (restr_opt', repl
 
 and check_term where_info ta_above comp_neut cur_array defined_refs t torg =
   if not ((occurs_name_to_discharge t) || 
-          (occurs_symbol_to_discharge t)) then
-    (* The variables in names_to_discharge do not occur in t => OK *)
-    success_no_advice
+          (occurs_symbol_to_discharge t) ||
+	  ((* When the user_term_mapping mentions term t, 
+              we transform it even if it does not contain
+	      anything to discharge; the things to discharge may appear 
+              by determining the values of variables. *)
+	  match !user_term_mapping with
+	    None -> false
+	  | Some tm -> List.exists (fun (occ,_) -> occ == t.t_occ) tm)) then
+    (* The variables in names_to_discharge and 
+       the symbols in occurs_symbol_to_discharge do not occur in t => OK *)
+    begin
+      (* When the user_term_mapping is present, I look for a subterm
+	 that might need to be transformed because it is mentioned
+	 in that mapping. *)
+      match !user_term_mapping with
+	None -> success_no_advice
+      |	Some tm ->
+	  match t.t_desc with
+	    FunApp(f,l) ->
+	      map_and_ins (fun t' -> check_term where_info [] None cur_array defined_refs t' t') l
+	  | _ -> 
+	      success_no_advice
+    end
   else
     try 
       let (mapping, exp) = find_map torg in
@@ -1926,9 +2124,7 @@ and check_term where_info ta_above comp_neut cur_array defined_refs t torg =
       (* Store in accu_exp all expressions in priority order *)
       let accu_exp = ref [] in
       List.iter2 (fun (lm1,mode) (rm1,_) -> collect_expressions accu_exp [] [] [] mode lm1 rm1) lm rm;
-      let all_names_lhs_opt = ref [] in
-      List.iter2 (fun (lm1,_) (rm1, _) -> collect_all_names all_names_lhs_opt lm1 rm1) lm rm;
-      let all_names_lhs = List.map (List.map fst) (!all_names_lhs_opt) in
+      let all_names_lhs = !equiv_names_lhs in
       (* Prepare a function to replace variables with their values *)
       let simp_facts = 
 	if !Settings.use_known_equalities_crypto then
@@ -1956,6 +2152,23 @@ and check_term where_info ta_above comp_neut cur_array defined_refs t torg =
       (* Try all expressions in accu_exp, in order. When an expression succeeds without
          advice, we can stop, since all future expressions don't have higher priority *)
       let r = try_list (fun ((ch, (restr_opt, args, res_term), (restr_opt', repl', args', res_term'), mode, priority) as current_exp) ->
+	begin
+	  match !user_term_mapping with
+	    None -> ()
+	  | Some tm ->
+	      try
+		(* When the user specified a term different from the one 
+                   currently_tried, fail, and try another one. *)
+		let user_res_term = List.assq t.t_occ tm in
+		if res_term != user_res_term then
+		  raise NoMatch
+	      with Not_found ->
+		(* The user specified no transformed term for the current term.
+		   If the mapping is supposed to be exhaustive, fail;
+		   otherwise continue *)
+		if !no_other_term then
+		  raise NoMatch
+	end;
 	try
 	  check_instance_of simp_facts (fun product_rest state -> 
 	    let old_map = !map in
@@ -1999,9 +2212,17 @@ and check_term where_info ta_above comp_neut cur_array defined_refs t torg =
 		        (* There is no replication at all in the LHS => 
 			   the expression must be evaluated once *)
 			if has_repl_index torg then
-			  raise NoMatch;
+			  begin
+			    if (!Settings.debug_cryptotransf) > 4 then
+			      print_string "There is no replication in the LHS of the equivalence, and the expression needs to be evaluated in the game for several different values of replication indices.\n";
+			    raise NoMatch
+			  end;
 			if List.exists (fun mapping -> mapping.source_exp == res_term) (!map) then
-			  raise NoMatch;
+			  begin
+			    if (!Settings.debug_cryptotransf) > 4 then
+			      print_string "There is no replication in the LHS of the equivalence, and the expression occurs several times in the game.\n";
+			    raise NoMatch
+			  end;
 			make_count repl' [] before_transfo_name_table,
 			(ch, None, [])
 		  in
@@ -2018,7 +2239,15 @@ and check_term where_info ta_above comp_neut cur_array defined_refs t torg =
 			      Display.display_term (Terms.term_from_binderref (b_check, l_check));
 			      print_string " is defined... "; *)
 			      if not (List.exists (Terms.equal_binderref (b_check, l_check)) defined_refs) then
-				raise NoMatch;
+				begin
+				  if (!Settings.debug_cryptotransf) > 4 then
+				    begin
+				      print_string "Variable ";
+				      Display.display_term (Terms.term_from_binderref (b_check, l_check));
+				      print_string " may not be defined after game transformation.\n"
+				    end;
+				  raise NoMatch
+				end;
 		              (* print_string "Ok.\n" *)
 			  | _ -> Parsing_helper.internal_error "unexpected link in check_term 3"
 			with Not_found ->
@@ -2065,6 +2294,7 @@ and check_term where_info ta_above comp_neut cur_array defined_refs t torg =
 		 let one_name = snd (List.hd before_transfo_restr) in
 		 let rec find_old_mapping = function
 		     [] -> (* No old mapping found, create a new one *)
+		       add_gameeq_name_mapping before_transfo_restr exp;
 		       let new_mapping =
 			 { expressions = [ exp ];
 			   before_transfo_name_table = before_transfo_name_table;
@@ -2092,7 +2322,12 @@ and check_term where_info ta_above comp_neut cur_array defined_refs t torg =
 			   let exp' = List.hd mapping.expressions in
 			   if not (Terms.equal_terms exp'.source_exp_instance 
 				     (Terms.subst cur_array' (snd (List.hd exp'.name_indexes_exp)) t')) then
-			     raise NoMatch;
+			     begin
+			       if (!Settings.debug_cryptotransf) > 4 then
+				 print_string "There is no replication under the last restriction in the LHS of the equivalence, and the expression needs to be evaluated several times in the game for the same restriction and with different arguments.\n";
+			       raise NoMatch
+			     end;
+			   add_gameeq_name_mapping before_transfo_restr exp;
 			   mapping.expressions <- exp :: mapping.expressions
 			 end
                        else 
@@ -2120,6 +2355,7 @@ and check_term where_info ta_above comp_neut cur_array defined_refs t torg =
 		   in
 		   mapping'.expressions <- exp :: mapping'.expressions
 		 with Not_found -> *)
+		   add_gameeq_name_mapping before_transfo_restr exp;
 		   let new_mapping = 
 		     { expressions = [ exp ];
 		       before_transfo_name_table = before_transfo_name_table;
@@ -2158,7 +2394,7 @@ and check_term where_info ta_above comp_neut cur_array defined_refs t torg =
 	    | NotComplete(to_do) ->
 		transform_to_do := merge_ins to_do (!transform_to_do);
 		true
-		  ) comp_neut (!all_names_lhs_opt) mode res_term t 
+		  ) comp_neut (!equiv_names_lhs_opt) mode res_term t 
 
 	with NoMatch ->
 	  if (!Settings.debug_cryptotransf) > 5 then
@@ -2175,7 +2411,7 @@ and check_term where_info ta_above comp_neut cur_array defined_refs t torg =
 	      match checks all_names_lhs current_exp None where_info cur_array defined_refs t state with
 		Success(to_do,_,_,_,_,_,_,_,_,_) |  AdviceNeeded(to_do) | NotComplete(to_do) ->
 		  transform_to_do := merge_ins (and_ins1 (ta_above,0,[]) to_do) (!transform_to_do)
-		       ) (!all_names_lhs_opt) mode res_term t;
+		       ) (!equiv_names_lhs_opt) mode res_term t;
 	  raise NoMatch
 	    ) (!accu_exp)
       in
@@ -3115,11 +3351,71 @@ and transform_oprocess cur_array p =
   restr_to_put := [];
   p''
 
+let rec update_def_list_simplif p =
+  Terms.iproc_from_desc (
+  match p.i_desc with
+    Nil -> Nil
+  | Par(p1,p2) ->
+      Par(update_def_list_simplif p1,
+	  update_def_list_simplif p2)
+  | Repl(b,p) ->
+      Repl(b, update_def_list_simplif p)
+  | Input((c,tl),pat,p) ->
+      Input((c,tl),pat, update_def_list_simplifo p))
+
+and update_def_list_simplifo p = 
+  match p.p_desc with
+    Yield -> Terms.oproc_from_desc Yield
+  | EventAbort f -> Terms.oproc_from_desc (EventAbort f)
+  | Restr(b,p) -> Terms.oproc_from_desc (Restr(b, update_def_list_simplifo p))
+  | Test(t,p1,p2) ->
+      Terms.oproc_from_desc (Test(t, 
+	   update_def_list_simplifo p1, 
+	   update_def_list_simplifo p2))
+  | Find(l0, p2, find_info) ->
+      let l0' =
+	List.fold_right (fun (bl, def_list, t, p1) laccu ->
+	  try
+	    let def_list' = 
+	      let already_defined = Facts.get_def_vars_at p.p_facts in
+	      let newly_defined = Facts.def_vars_from_defined (Facts.get_node p.p_facts) def_list in
+	      Facts.update_def_list_process already_defined newly_defined bl def_list t p1
+	    in
+	    (bl, def_list', t, p1) :: laccu
+	  with Contradiction ->
+	    (* The variables in the defined condition cannot be defined,
+	       I can just remove the branch *)
+	    laccu
+	  ) l0 []
+      in
+      Terms.oproc_from_desc (Find(l0', 
+	   update_def_list_simplifo p2, find_info))
+  | Let(pat,t,p1,p2) ->
+      Terms.oproc_from_desc (Let(pat, t, 
+	  update_def_list_simplifo p1, 
+	  update_def_list_simplifo p2))
+  | Output((c,tl),t2,p) ->
+      Terms.oproc_from_desc (Output((c, tl), t2, 
+	     update_def_list_simplif p))
+  | EventP(t,p) ->
+      Terms.oproc_from_desc (EventP(t,
+	     update_def_list_simplifo p))
+  | Get _|Insert _ -> Parsing_helper.internal_error "Get/Insert should not appear here"
+	
 let do_crypto_transform p = 
   Terms.array_ref_process p;
   let r = transform_process [] p in
   Terms.cleanup_array_ref();
-  r
+  let r' =
+    if !Settings.use_known_equalities_crypto then
+      begin
+	Terms.build_def_process None r;
+	update_def_list_simplif r
+      end
+    else
+      r
+  in
+  r'
 
 (* Compute the runtime of the context *)
 
@@ -3646,7 +3942,11 @@ and find_restro accu p =
       List.iter (fun (_,_,_,p1) -> find_restro accu p1) l0;
       find_restro accu p2
   | Restr(b,p) ->
-      if not (List.memq b (!accu)) then
+      if (not (List.memq b (!accu))) &&
+         (* Consider only the restrictions such that a restriction
+            of the same type occurs in the equivalence we want to apply. *)
+         (List.exists (fun b_eq -> b.btype == b_eq.btype) (!equiv_names_lhs_flat))
+      then
 	accu := b :: (!accu);
       find_restro accu p
   | Output(_,_,p) -> 
@@ -3689,15 +3989,35 @@ let rec try_with_partial_assoc old_to_do apply_equiv names =
 	(!names_to_discharge, to_do)
 
 let try_with_known_names names apply_equiv =
-  (* We rebuild the list of names to discharge by adding them one by one.
-     This is better for CDH. *)
-  let names_rev = List.rev names in
   map := [];
   rebuild_map_mode := true;
-  names_to_discharge := [(List.hd names_rev, ref DontKnow)];
+  (* Try to guess the correct name mapping just from types *)
+  List.iter (fun n ->
+    if not (List.exists (fun (b,_) -> b == n)  (!gameeq_name_mapping)) then
+      (* n has not been mapped yet, try to find the right image from its type *)
+      match List.filter (fun b_eq -> b_eq.btype == n.btype) (!equiv_names_lhs_flat) with
+	[] -> (* Found no variable of the right type,
+	         the transformation cannot succeed! *)
+	  fail (NoChangeName n)
+      |	[b_eq] -> 
+	  (* Found exactly one variable of the right type,
+	     n will for sure be mapped to that variable *)
+	  gameeq_name_mapping := (n, b_eq) :: (!gameeq_name_mapping)
+      |	_ -> (* Several possibilities, will see later *)
+	  ()
+    ) names;
+  (* When the corresponding name in the equivalence is not known, 
+     we rebuild the list of names to discharge by adding them one by one.
+     This is better for Diffie-Hellman. *)
+  let names_rev = List.rev names in
+  names_to_discharge := 
+     if (!gameeq_name_mapping) == [] then
+       [(List.hd names_rev, ref DontKnow)]
+     else
+       List.map (fun (n,_) -> (n, ref DontKnow)) (!gameeq_name_mapping);
   try_with_partial_assoc [([],0,!names_to_discharge)] apply_equiv names_rev
 
-
+    
 (*
   names_to_discharge := names;
   map := [];
@@ -3792,7 +4112,7 @@ let map_has_exist (((_, lm, _, _, _, _),_) as apply_equiv) map =
 
 type trans_res =
   TSuccessPrio of setf list * detailed_instruct list * game
-| TFailurePrio of to_do_t * (binder list * failure_reason) list
+| TFailurePrio of to_do_t * ((binder * binder) list * failure_reason) list
 
 let transfo_expand p q =
   Transf_expand.expand_process { proc = do_crypto_transform p; game_number = -1; current_queries = q }
@@ -3805,6 +4125,7 @@ let rec try_with_restr_list apply_equiv = function
           names_to_discharge := b;
 	  global_sthg_discharged := false;
 	  map := [];
+	  gameeq_name_mapping := [];
 	  let vcounter = !Terms.vcounter in
 	  if (!Settings.debug_cryptotransf) > 0 then
 	    begin
@@ -3844,7 +4165,11 @@ let rec try_with_restr_list apply_equiv = function
 		      end;
 		    let (g',proba',ins) = transfo_expand (!whole_game).proc (!whole_game).current_queries in
 		    whole_game_next := g';
-		    TSuccessPrio ((compute_proba apply_equiv) @ proba', ins @ [DCryptoTransf(apply_equiv, List.map fst discharge_names)], g')
+		    TSuccessPrio ((compute_proba apply_equiv) @ proba',
+				  ins @ [DCryptoTransf(apply_equiv, Detailed(Some (!gameeq_name_mapping, [], !stop_mode),
+								     (match !user_term_mapping with
+								       None -> None
+								     | Some tm -> Some (tm, !no_other_term))))], g')
 		  end
 		else
 		  fail NoUsefulChange
@@ -3854,15 +4179,16 @@ let rec try_with_restr_list apply_equiv = function
 		Terms.vcounter := vcounter; (* This transformation failed, forget the variables *)
 		match try_with_restr_list apply_equiv l with
 		  (TSuccessPrio _) as result -> result
-		| TFailurePrio (l',failure_reasons) -> TFailurePrio (merge_ins to_do l',failure_reasons)
+		| TFailurePrio (l',failure_reasons) ->
+		    TFailurePrio (merge_ins to_do l',failure_reasons)
 	      end
           with OneFailure failure_reason -> 
 	    Terms.vcounter := vcounter; (* This transformation failed, forget the variables *)
 	    if (b == []) then
-	      let names = List.map fst (!names_to_discharge) in
 	      match try_with_restr_list apply_equiv l with
 		(TSuccessPrio _) as result -> result
-	      | TFailurePrio (l',failure_reasons) -> TFailurePrio (l', (names, failure_reason)::failure_reasons)
+	      | TFailurePrio (l',failure_reasons) ->
+		  TFailurePrio (l', (!gameeq_name_mapping, failure_reason)::failure_reasons)
 	    else
 	      (* When b != [], 
 		 we do not register the reason why the transformation failed. 
@@ -3910,10 +4236,50 @@ let events_proba_queries events =
     (proba, query)
       ) events)
 
-let crypto_transform stop no_advice (((_,lm,_,_,_,opt2),_) as apply_equiv) names ({ proc = p } as g) = 
-  stop_mode := stop;
+let get_advised_info n =
+  VarList(List.map fst n, !stop_mode)
+  (* 
+     I tried to pass the name mapping to the next try, 
+     but it did not work well: that name mapping may in fact be wrong.
+  let n' = List.map fst n in
+  let n'' = List.filter (fun n1 -> not (List.exists (fun (n1',_) -> n1' == n1) (!gameeq_name_mapping))) n' in
+  Detailed(Some(!gameeq_name_mapping, n'', !stop_mode), None) *)
+
+let crypto_transform no_advice (((_,lm,rm,_,_,opt2),_) as apply_equiv) user_info ({ proc = p } as g) =
+  let names = 
+    match user_info with
+      VarList(l, stop) ->
+	stop_mode := stop;
+	gameeq_name_mapping := [];
+	l
+    | Detailed(var_map, term_map) ->
+	begin
+	  match term_map with
+	    Some(tmap, stop) ->
+	      no_other_term := stop;
+	      user_term_mapping := Some tmap
+	  | None ->
+	      no_other_term := false;
+	      user_term_mapping := None
+	end;
+	begin
+	  match var_map with
+	    Some (vmap, vl, stop) ->
+	      stop_mode := stop;
+	      gameeq_name_mapping := vmap;
+	      vl @ (List.map fst vmap)
+	  | None ->
+	      stop_mode := false;
+	      gameeq_name_mapping := [];
+	      []
+	end
+  in
   no_advice_mode := no_advice;
   equiv := apply_equiv;
+  equiv_names_lhs_opt := [];
+  List.iter2 (fun (lm1,_) (rm1, _) -> collect_all_names equiv_names_lhs_opt lm1 rm1) lm rm;
+  equiv_names_lhs := List.map (List.map fst) (!equiv_names_lhs_opt);
+  equiv_names_lhs_flat := List.concat (!equiv_names_lhs);
   whole_game := g;
   introduced_events := [];
   time_computed := None;
@@ -3938,7 +4304,7 @@ let crypto_transform stop no_advice (((_,lm,_,_,_,opt2),_) as apply_equiv) names
 	  if ((!Settings.debug_cryptotransf) > 0) && (l != []) then 
 	    print_string "Advice given\n";
 	  Terms.vcounter := vcounter; (* Forget created variables when the transformation fails *)
-	  TFailure (List.map (fun (l,p,n) -> (apply_equiv, List.map fst n, l)) l, failure_reasons)
+	  TFailure (List.map (fun (l,p,n) -> (apply_equiv, get_advised_info n, l)) l, failure_reasons)
     end
   else
     begin
@@ -3960,7 +4326,11 @@ let crypto_transform stop no_advice (((_,lm,_,_,_,opt2),_) as apply_equiv) names
 		whole_game_next := g';
 		let (ev_proba, ev_q) = events_proba_queries (!introduced_events) in
 		g'.current_queries <- ev_q @ g'.current_queries;
-		TSuccess ((compute_proba apply_equiv) @ ev_proba @ proba', ins @ [DCryptoTransf(apply_equiv, List.map fst discharge_names)], g')
+		TSuccess ((compute_proba apply_equiv) @ ev_proba @ proba',
+			  ins @ [DCryptoTransf(apply_equiv, Detailed(Some (!gameeq_name_mapping, [], !stop_mode),
+								     (match !user_term_mapping with
+								       None -> None
+								     | Some tm -> Some (tm, !no_other_term))))], g')
 	      end
 	    else
 	      fail NoUsefulChange
@@ -3970,9 +4340,9 @@ let crypto_transform stop no_advice (((_,lm,_,_,_,opt2),_) as apply_equiv) names
 	    if (!Settings.debug_cryptotransf) > 0 then 
 	      print_string "Advice given\n";
 	    Terms.vcounter := vcounter; (* Forget created variables when the transformation fails *)
-            TFailure (List.map (fun (l,p,n) -> (apply_equiv, List.map fst n, l)) to_do, [])
+            TFailure (List.map (fun (l,p,n) -> (apply_equiv, get_advised_info n, l)) to_do, [])
 	  end
       with OneFailure failure_reason -> 
 	Terms.vcounter := vcounter; (* Forget created variables when the transformation fails *)
-	TFailure ([], [List.map fst (!names_to_discharge), failure_reason])
+	TFailure ([], [!gameeq_name_mapping, failure_reason])
     end

@@ -46,10 +46,6 @@ knowledge of the CeCILL-B license and that you accept its terms.
 *)
 open Lexing
 
-exception IllegalCharacter
-exception IllegalEscape
-exception UnterminatedString
-
 let accept_arobase = ref false
 
 let internal_error mess =

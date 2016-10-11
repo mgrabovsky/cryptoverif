@@ -65,6 +65,7 @@ val debug_elsefind_facts : bool ref
 val debug_simplify : bool ref
 val debug_simplif_add_facts : bool ref
 
+val max_depth_add_fact : int ref
 val elsefind_facts_in_replace : bool ref
 val max_replace_depth : int ref
 val elsefind_facts_in_success : bool ref

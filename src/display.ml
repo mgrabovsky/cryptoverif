@@ -1097,6 +1097,40 @@ let display_move_set = function
 let display_bl_assoc bl_assoc =
   display_list display_binder bl_assoc
 
+let display_user_info = function
+    VarList(l,stop) ->
+      display_list display_binder l;
+      if stop then print_string "."
+  | Detailed(vmopt,tmopt) ->
+      begin
+      match vmopt with
+	None -> ()
+      | Some(vm,vl,stop) ->
+	  print_string "variables: ";
+	  display_list (fun (b1,b2) -> display_binder b1; print_string " -> "; display_binder b2) vm;
+	  if vm != [] && vl != [] then print_string ", ";
+	  display_list display_binder vl;
+	  if stop then print_string ".";
+	  if tmopt != None then print_string ";"
+      end;
+      begin
+      match tmopt with
+	None -> ()
+      | Some(tm,stop) ->
+	  print_string "terms: ";
+	  display_list (fun (occ,t) -> print_int occ; print_string " -> "; display_term t) tm;
+	  if stop then print_string "."
+      end
+	      
+    
+let display_with_user_info user_info =
+  match user_info with
+    VarList([],_) | Detailed((None | Some([],[],_)), (None | Some([],_))) -> ()
+  | _ ->
+      print_string "with ";
+      display_user_info user_info
+
+    
 let rec display_query1 = function
     [] -> Parsing_helper.internal_error "List should not be empty"
   | [b,t] -> 
@@ -1174,14 +1208,10 @@ let display_instruct = function
   | SArenaming b -> 
       print_string "SA rename ";
       display_binder b
-  | CryptoTransf(e, bl_assoc) -> 
+  | CryptoTransf(e, user_info) -> 
       print_string "equivalence ";
       display_equiv_with_name e;
-      if bl_assoc != [] then
-	begin
-	  print_string "with ";
-	  display_bl_assoc bl_assoc
-	end
+      display_with_user_info user_info
   | InsertEvent(s,occ) ->
       print_string ("insert event " ^ s ^ " at occurrence " ^ (string_of_int occ))
   | InsertInstruct(s,ext_s,occ,ext_o) ->
@@ -1840,14 +1870,10 @@ let display_detailed_ins = function
       print_string "  - Move assignment to ";
       display_binder b;
       print_newline()      
-  | DCryptoTransf(e, bl_assoc) ->
+  | DCryptoTransf(e, user_info) ->
       print_string "  - Equivalence ";
       display_equiv_with_name e;
-      if bl_assoc != [] then
-	begin
-	  print_string "with ";
-	  display_bl_assoc bl_assoc
-	end;
+      display_with_user_info user_info;
       print_newline()
   | DInsertEvent _  | DInsertInstruct _ 
   | DReplaceTerm _  | DMergeArrays _ ->

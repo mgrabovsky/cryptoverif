@@ -62,5 +62,6 @@ val display_failure_reason : failure_reason -> unit
    which guarantees that by calling [Transf_auto_sa_rename.auto_sa_rename].
 *)
 
-val crypto_transform : bool -> bool -> equiv_nm -> binder list -> game -> trans_res
+val crypto_transform : bool -> equiv_nm -> crypto_transf_user_info ->
+  game -> trans_res
 

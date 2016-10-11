@@ -114,23 +114,25 @@ let defined_condition_update_needed = ref false
 (* Advised instructions *)
 let advise = ref []
 
-(* [add_advice new_advice] adds [new_advice] to the list
+(* [add_advice_sarename b] adds [SArenaming b] to the list
    of advised instructions [advise] *)
 
-let add_advice new_advice =
-  if !Settings.no_advice_globaldepanal then 
+let add_advice_sarename b =
+  if Settings.occurs_in_queries b then
+    ()
+  else if !Settings.no_advice_globaldepanal then 
     begin
       print_string "Manual advice: ";
-      Display.display_list Display.display_instruct new_advice;
+      Display.display_instruct (SArenaming b);
       print_newline()
     end
   else
-    List.iter (fun x -> advise := Terms.add_eq x (!advise)) new_advice
+    advise := Terms.add_eq (SArenaming b) (!advise)
 
 (* This exception is raised when the global dependency analysis fails *)
 exception BadDep
 
-type branch = OnlyThen | OnlyElse | BothDepB | BothIndepB of term
+type branch = Unreachable | OnlyThen | OnlyElse | BothDepB | BothIndepB of term
 
 let equal_charac_type c1 c2 =
   match (c1,c2) with
@@ -245,6 +247,11 @@ let add_collisions_for_current_check_dependency2 cur_array true_facts side_condi
 let depends t = 
   List.exists (fun (b, _) -> Terms.refers_to b t) (!dvar_list)
 
+let rec depends_pat = function
+    PatVar _ -> false
+  | PatTuple(_,l) -> List.exists depends_pat l
+  | PatEqual t -> depends t
+    
 (* [defined t] returns [true] when [t] may be defined *)
 
 let rec defined t =
@@ -479,11 +486,11 @@ let dependency_collision cur_array simp_facts t1 t2 =
     (Some _) as x -> x
   | None -> dependency_collision_rec cur_array true_facts t2' t1' t2'
 
-
 (* [almost_indep_test cur_array true_facts fact_info t] 
    checks that the result of test [t] does not depend on 
    variables in [dvar_list], up to negligible probability.
 Returns
+- Unreachable when the term t is in fact unreachable
 - BothDepB when the result may depend on variables in [dvar_list];
 - OnlyThen when the test is true with overwhelming probability;
 - OnlyElse when the test is false with overwhelming probability;
@@ -495,6 +502,13 @@ evaluated only when the facts in [true_facts] are true.
 [fact_info] indicates the true facts and defined variables at [t].
 *)
 
+let to_term = function
+    Unreachable -> raise Contradiction
+  | OnlyThen -> Terms.make_true()
+  | OnlyElse -> Terms.make_false()
+  | BothIndepB t -> t
+  | BothDepB -> raise BadDep
+	
 let rec almost_indep_test cur_array true_facts fact_info t =
   match t.t_desc with
     FunApp(f,[t1;t2]) when f == Settings.f_and ->
@@ -504,7 +518,7 @@ let rec almost_indep_test cur_array true_facts fact_info t =
 	  OnlyElse -> 
             (* t2 is always false, the value of t1 does not matter *) 
 	    BothDepB
-	| OnlyThen -> 
+	| Unreachable | OnlyThen -> 
 	    (* I have eliminated a collision in t2 using the fact that t1 is true,
 	       I won't assume t2 when analyzing t1 *)
 	    almost_indep_test cur_array true_facts fact_info t1
@@ -518,7 +532,9 @@ let rec almost_indep_test cur_array true_facts fact_info t =
 	    almost_indep_test cur_array (t2'::true_facts) fact_info t1
 	in
 	match (t1res, t2res) with
-	  (OnlyElse, _) | (_, OnlyElse) -> OnlyElse
+	  (Unreachable, _) | (_, Unreachable) -> OnlyElse
+             (* t1 is unreachable when t2 is true, so t2 is false *) 
+	| (OnlyElse, _) | (_, OnlyElse) -> OnlyElse
 	| (OnlyThen, x) -> x
 	| (x, OnlyThen) -> x
 	| (BothDepB, _) | (_, BothDepB) -> BothDepB
@@ -528,7 +544,7 @@ let rec almost_indep_test cur_array true_facts fact_info t =
       begin
 	let t2res = almost_indep_test cur_array ((Terms.make_not t1)::true_facts) fact_info t2 in
 	let t1res = match t2res with
-	  OnlyElse -> 
+	  Unreachable | OnlyElse -> 
 	    (* I have eliminated a collision in t2 using the fact that t1 is false,
 	       I won't assume (not t2) when analyzing t1 *)
 	    almost_indep_test cur_array true_facts fact_info t1
@@ -545,7 +561,8 @@ let rec almost_indep_test cur_array true_facts fact_info t =
 	    almost_indep_test cur_array ((Terms.make_not t2')::true_facts) fact_info t1
 	in
 	match (t1res, t2res) with
-	  (OnlyThen, _) | (_, OnlyThen) -> OnlyThen
+	  (Unreachable, _) | (_, Unreachable) -> OnlyThen
+	| (OnlyThen, _) | (_, OnlyThen) -> OnlyThen
 	| (OnlyElse, x) -> x
 	| (x, OnlyElse) -> x
 	| (BothDepB, _) | (_, BothDepB) -> BothDepB
@@ -554,7 +571,8 @@ let rec almost_indep_test cur_array true_facts fact_info t =
   | FunApp(f,[t1]) when f == Settings.f_not ->
       begin
 	match almost_indep_test cur_array true_facts fact_info t1 with
-	  OnlyThen -> OnlyElse
+	  Unreachable -> Unreachable
+	| OnlyThen -> OnlyElse
 	| OnlyElse -> OnlyThen
 	| BothDepB -> BothDepB
 	| BothIndepB t' -> BothIndepB (Terms.make_not t')
@@ -595,8 +613,12 @@ let rec almost_indep_test cur_array true_facts fact_info t =
 	      else
 		BothIndepB t
       end
-  | _ -> 
-      if depends t then 
+  | _ ->
+      if Terms.is_false t then
+	OnlyElse
+      else if Terms.is_true t then
+	OnlyThen
+      else if depends t then 
 	BothDepB 
       else
 	BothIndepB t
@@ -632,7 +654,8 @@ let almost_indep_test cur_array t =
     else if Terms.is_false t' then
       OnlyElse
     else if depends t' then
-      begin
+      BothDepB
+      (*begin
 	print_string ("At " ^ (string_of_int t.t_occ) ^ ", the term ");
 	Display.display_term t;
 	if Terms.synt_equal_terms t t' then
@@ -644,72 +667,91 @@ let almost_indep_test cur_array t =
 	    print_string (", but still depends on " ^ (Display.binder_to_string (!main_var)) ^ "\n")
 	  end;
 	BothDepB
-      end
+      end*)
     else
       BothIndepB (Terms.move_occ_term t')
   with Contradiction ->
     (* The term [t] is in fact unreachable *)
-    OnlyElse
+    Unreachable
 
-(* [convert_to_term pat] converts the pattern [pat] into a term,
-   when [pat] does not bind variables.
-   When [pat] binds variables, it raises [Not_found] *)
+(* [set_depend b t] adds the information in [dvar_list] to record that 
+   [b] is defined as [t], by [let b = t in ...] in a LetE term in a find condition.
+   Since variables defined in conditions of find have no array accesses,
+   we know that accesses to b in the body of the let will use only the definition
+   [b = t], so we need not combine that definition of [b] with definitions of [b]
+   that may occur elsewhere. *)
 
-let rec find_facts = function
-    [] -> None
-  | t::l ->
-      if t.t_facts == None then find_facts l else t.t_facts
+let set_depend b t =
+  let dvar_list_nob = List.filter (fun (b',_) -> b' != b) (!dvar_list) in
+  match find_compos_list t with
+    Some (st, charac_type,t1,new_charac_args_opt) ->
+      (* [t] characterizes a part of [b0] *)
+      let t2 = Terms.term_from_binder b in
+      let new_depend_args_opt =
+	let collect_bargs = ref [] in
+	try
+	  get_dep_indices collect_bargs t;
+	  match !collect_bargs with
+	    [l] -> Some l (* [t] depends only on [b0[l]] *)
+	  | [] -> Parsing_helper.internal_error "What?!? t characterizes b0 but it does not depend on b0!"
+	  | _ -> None
+	with Depends -> None
+      in
+      let charac_type' = 
+	if st = Decompos then CharacType b.btype else charac_type 
+      in
+          (*print_string "Adding ";
+            Display.display_binder b;
+            print_newline();*)
+      let b_st =  (b,(st, (ref [t1, t2, charac_type'], ref new_charac_args_opt, ref new_depend_args_opt))) in
+      dvar_list := b_st :: dvar_list_nob
+  | None -> 
+      if depends t then
+	(* The variable [b] depends on [b0], but we do not have more precise information *)
+	dvar_list := (b, (Any, (ref [], ref None, ref None))) :: dvar_list_nob
+      (* When [t] does not depend on [b0], we have nothing to do *)
 
-let find_map = function
-    [] -> Terms.map_empty
-  | t::_ -> t.t_incompatible
 
-let rec convert_to_term = function
-    PatVar _ -> raise Not_found
-  | PatTuple(f,l) ->
-      let l' = List.map convert_to_term l in
-      { t_desc = FunApp(f,l');
-	t_type = snd f.f_type;
-	t_occ = Terms.new_occ(); 
-	t_max_occ = 0;
-	t_loc = Parsing_helper.dummy_ext;
-	t_incompatible = find_map l';
-	t_facts = find_facts l' }
-  | PatEqual t -> t
 
-(* [check_assign1 cur_array proba_info new_charac_args_opt new_depend_args_opt vars_to_add tmp_bad_dep st pat] 
-   is called to analyze the pattern [pat] of an assignment 
-   when the assigned term characterizes [b0].
-   Returns [false] when the let is always going to take the else branch
-   up to negligible probability.
-   Returns [true] when the let can take both branches
-   [cur_array] is the list of current replication indices.
-   [proba_info = (t1,t2,charac_type)] when 
-      - [t1] is the assigned term in which useless parts have been replaced with fresh variables [?], 
-      - [t2] is a term built from the pattern [pat], 
-      - [charac_type] determines the type of the part of [b0] characterized by the assigned term.
-   [new_charac_args_opt = Some l] when the assigned term characterizes the cell [b0[l]],
-   [new_charac_args_opt = None] when the assigned term characterizes an unknown cell of [b0];
-   [new_depend_args_opt = Some l] when the assigned term depends only on the cell [b0[l]] of [b0],
-   [new_depend_args_opt = None] when the assigned term depends only on unknown/several cells of [b0],
-   [vars_to_add] collects the variables bound by the pattern and not already in [dvar_list],
-   which must therefore be added to [dvar_list], since they depend on [b0].
-   [tmp_bad_dep] is set to true when there is a bad dependency except when
-   the let always takes the else branch. 
-   [st] is 
-        - [Compos] when the assigned term is obtained from [b0] by first applying
-        poly-injective functions (functions marked [compos]), then
-        functions that extract a part of their argument 
-        (functions marked [uniform]).
-        - [Decompos] when the assigned term is obtained from [b0] by applying functions
-        that extract a part of their argument (functions marked [uniform]) *)
+(* [add_indep b] adds the information that there is a definition of
+   [b] that does not depend on [b0]. When there is another definition
+   of [b] that depends on [b0], we lose the information on the precise
+   dependency of [b] from [b0]. *) 
 
-let rec check_assign1 cur_array ((t1, t2, charac_type) as proba_info) new_charac_args_opt new_depend_args_opt vars_to_add tmp_bad_dep st = function
-    PatVar b ->
+let add_indep b =
+  try 
+    let (st',_) = List.assq b (!dvar_list) in
+    if st' != Any then
       begin
-	let charac_type' = 
-	  if st = Decompos then CharacType b.btype else charac_type 
-	in
+	add_advice_sarename b;
+	dvar_list_changed := true;
+	dvar_list := (b, (Any, (ref [], ref None, ref None))) :: (List.filter (fun (b',_) -> b' != b) (!dvar_list))
+      end
+  with Not_found ->
+    ()
+
+(* [add_depend b t] adds the information in [dvar_list] to record that 
+   [b] is defined as [t], by [let b = t in ...] *)
+
+let add_depend b t =
+  match find_compos_list t with
+    Some (st, charac_type,t1,new_charac_args_opt) ->
+      (* [t] characterizes a part of [b0] *)
+      let t2 = Terms.term_from_binder b in
+      let new_depend_args_opt =
+	let collect_bargs = ref [] in
+	try
+	  get_dep_indices collect_bargs t;
+	  match !collect_bargs with
+	    [l] -> Some l (* [t] depends only on [b0[l]] *)
+	  | [] -> Parsing_helper.internal_error "What?!? t characterizes b0 but it does not depend on b0!"
+	  | _ -> None
+	with Depends -> None
+      in
+      let charac_type' = 
+	if st = Decompos then CharacType b.btype else charac_type 
+      in
+      begin
 	try 
 	  let (st',(proba_info_list, charac_args_opt, depend_args_opt)) = List.assq b (!dvar_list) in
 	  begin
@@ -718,7 +760,7 @@ let rec check_assign1 cur_array ((t1, t2, charac_type) as proba_info) new_charac
 		if List.for_all2 Terms.equal_terms l1 l2 then () else
 		begin
 		  (* SArenaming b may allow to keep explicit indices characterized by [b] *)
-		  add_advice [SArenaming b];
+		  add_advice_sarename b;
 		  dvar_list_changed := true;
 		  charac_args_opt := None
 		end
@@ -733,7 +775,7 @@ let rec check_assign1 cur_array ((t1, t2, charac_type) as proba_info) new_charac
 		if List.for_all2 Terms.equal_terms l1 l2 then () else
 		begin
 		  (* SArenaming b may allow to keep explicit indices of [b0] on which [b] depends *)
-		  add_advice [SArenaming b];
+		  add_advice_sarename b;
 		  dvar_list_changed := true;
 		  depend_args_opt := None
 		end
@@ -742,8 +784,13 @@ let rec check_assign1 cur_array ((t1, t2, charac_type) as proba_info) new_charac
 		dvar_list_changed := true;
 		depend_args_opt := None
 	  end;
+	  if st' = Any then () else
 	  if st != st' then
-	    tmp_bad_dep := true
+	    begin
+	      add_advice_sarename b;
+	      dvar_list_changed := true;
+	      dvar_list := (b, (Any, (ref [], ref None, ref None))) :: (List.filter (fun (b',_) -> b' != b) (!dvar_list))
+	    end
 	  else if not (List.exists (fun (t1', t2', charac_type'') ->
 	    (matches_pair t1' t2' t1 t2) &&
 	    (equal_charac_type charac_type' charac_type'')) (!proba_info_list))
@@ -777,39 +824,113 @@ let rec check_assign1 cur_array ((t1, t2, charac_type) as proba_info) new_charac
 	      proba_info_list := (t1, t2, charac_type') :: (!proba_info_list)
 	    end
 	with Not_found ->
-	  vars_to_add := (b,(st, (ref [t1, t2, charac_type'], ref new_charac_args_opt, ref new_depend_args_opt))) :: (!vars_to_add)
-      end;
-      true
-  | (PatTuple(f,l)) as pat ->
-      if st == Decompos then
-	List.for_all (check_assign1 cur_array proba_info new_charac_args_opt new_depend_args_opt vars_to_add tmp_bad_dep st) l
-      else
-	begin
-	try 
-	  let t = convert_to_term pat in
-	  if (depends t) || 
-          (not (Proba.is_large_term t)) then
+          (*print_string "Adding ";
+            Display.display_binder b;
+            print_newline();*)
+	  if Terms.is_assign b then
 	    begin
-	      tmp_bad_dep := true;
-	      true
+	      let b_st =  (b,(st, (ref [t1, t2, charac_type'], ref new_charac_args_opt, ref new_depend_args_opt))) in
+      	      dvar_list := b_st :: (!dvar_list)
 	    end
 	  else
 	    begin
+	      add_advice_sarename b;
+	      dvar_list := (b, (Any, (ref [], ref None, ref None))) :: (!dvar_list)
+	    end;
+	  dvar_list_changed := true
+      end
+  | None -> 
+      if depends t then
+	(* The variable [b] depends on [b0], but we do not have more precise information *)
+	begin
+	  try 
+	    let (st',_) = List.assq b (!dvar_list) in
+	    if st' != Any then
+	      begin
+		dvar_list_changed := true;
+		dvar_list := (b, (Any, (ref [], ref None, ref None))) :: (List.filter (fun (b',_) -> b' != b) (!dvar_list))
+	      end
+	  with Not_found ->
+	    dvar_list := (b, (Any, (ref [], ref None, ref None))) :: (!dvar_list);
+	    dvar_list_changed := true
+	end
+      else
+        (* When [t] does not depend on [b0], 
+	   if we already recorded that [b] may depend on [b0],
+	   it becomes an [Any] dependency: [b] may depend on [b0], 
+	   but we do not have more precise information*)
+	add_indep b
+
+(* [convert_to_term pat] converts the pattern [pat] into a term,
+   when [pat] does not bind variables.
+   When [pat] binds variables, it raises [Not_found] *)
+
+let rec find_facts = function
+    [] -> None
+  | t::l ->
+      if t.t_facts == None then find_facts l else t.t_facts
+
+let find_map = function
+    [] -> Terms.map_empty
+  | t::_ -> t.t_incompatible
+
+let rec convert_to_term = function
+    PatVar _ -> raise Not_found
+  | PatTuple(f,l) ->
+      let l' = List.map convert_to_term l in
+      { t_desc = FunApp(f,l');
+	t_type = snd f.f_type;
+	t_occ = Terms.new_occ(); 
+	t_max_occ = 0;
+	t_loc = Parsing_helper.dummy_ext;
+	t_incompatible = find_map l';
+	t_facts = find_facts l' }
+  | PatEqual t -> t
+
+
+(* [check_assign1 cur_array proba_info st pat] 
+   is called to analyze the pattern [pat] of an assignment 
+   when the assigned term characterizes [b0].
+   Returns [false] when the let is always going to take the else branch
+   up to negligible probability.
+   Returns [true] when the let can take both branches
+   [cur_array] is the list of current replication indices.
+   [proba_info = (t1,t2,charac_type)] when 
+      - [t1] is the assigned term in which useless parts have been replaced with fresh variables [?], 
+      - [t2] is a term built from the pattern [pat], 
+      - [charac_type] determines the type of the part of [b0] characterized by the assigned term.
+   [st] is 
+        - [Compos] when the assigned term is obtained from [b0] by first applying
+        poly-injective functions (functions marked [compos]), then
+        functions that extract a part of their argument 
+        (functions marked [uniform]).
+        - [Decompos] when the assigned term is obtained from [b0] by applying functions
+        that extract a part of their argument (functions marked [uniform]) *)
+
+let rec check_assign1 cur_array proba_info st = function
+    PatVar b ->
+      true
+  | (PatTuple(f,l)) as pat ->
+      if st == Decompos then
+	List.for_all (check_assign1 cur_array proba_info st) l
+      else
+	begin
+	  try 
+	    let t = convert_to_term pat in
+	    if (depends t) || (not (Proba.is_large_term t)) then
+	      true
+	    else
+	      begin
 	      (* add probability *)
-	      add_collisions_for_current_check_dependency (cur_array, [], t.t_facts) proba_info;
-	      false
-	    end
-	with Not_found ->
-	  tmp_bad_dep := true;
-	  true
+		add_collisions_for_current_check_dependency (cur_array, [], t.t_facts) proba_info;
+		false
+	      end
+	  with Not_found ->
+	    true
 	end
   | PatEqual t ->
-      if (depends t) || 
-        (not (Proba.is_large_term t)) then
-	begin
-	  tmp_bad_dep := true;
-	  true
-	end
+      if (depends t) || (not (Proba.is_large_term t)) then
+	true
       else
 	begin
 	  (* add probability *)
@@ -817,28 +938,22 @@ let rec check_assign1 cur_array ((t1, t2, charac_type) as proba_info) new_charac
 	  false
 	end
 
-(* [check_assign2 to_advise tmp_bad_dep pat] is called to analyze the pattern [pat] of
+(* [check_assign2 tmp_bad_dep pat] is called to analyze the pattern [pat] of
    an input or of an assignment when the assigned term does not depend on [b0].
    Returns [Some(charac_type, t')] when the let is always going to take the 
    else branch up to negligible probability. [t'] is the term with which
    the collision is eliminated and [charac_type] the type of the part of 
    [t'] characterized by the value of the pattern.
    Returns [None] when the let can take both branches 
-   [to_advise] collects advised game transformations to avoid bad dependencies.
    [tmp_bad_dep] is set to true when there is a bad dependency except when
    the let always takes the else branch. *)
 
-let rec check_assign2 to_advise tmp_bad_dep = function
+let rec check_assign2 tmp_bad_dep = function
     PatVar b ->
-      if List.exists (fun (b',_) -> b == b') (!dvar_list) then
-	begin
-	  to_advise := Terms.add_eq (SArenaming b) (!to_advise);
-	  tmp_bad_dep := true
-	end;
       None
   | PatTuple(f,l) ->
       begin
-        match check_assign2_list to_advise tmp_bad_dep l with
+        match check_assign2_list tmp_bad_dep l with
 	  None -> None
 	| Some(charac_type, l') ->
 	    Some (charac_type, Terms.build_term_type (snd f.f_type) (FunApp(f,l')))
@@ -854,18 +969,347 @@ let rec check_assign2 to_advise tmp_bad_dep = function
 	  None
 	end
 
-and check_assign2_list to_advise tmp_bad_dep = function
+and check_assign2_list tmp_bad_dep = function
     [] -> None
   | (a::l) ->
-      match check_assign2 to_advise tmp_bad_dep a with
+      match check_assign2 tmp_bad_dep a with
 	None -> 
 	  begin
-	    match check_assign2_list to_advise tmp_bad_dep l with
+	    match check_assign2_list tmp_bad_dep l with
 	      None -> None
 	    | Some(charac_type, l') -> Some(charac_type, (any_term_pat a)::l')
 	  end
       |	Some(charac_type, a') -> Some(charac_type, a'::(List.map any_term_pat l))
 
+
+(* Independence test for find conditions, which may contain if/let/find *)
+
+
+(* This exception is raised when both branches of a LetE may be taken,
+   and the choice may depend on [b0]. *)
+exception BothDep
+      
+let rec almost_indep_fc cur_array t0 =
+  match t0.t_desc with
+  | FindE(l0,p2,find_info) ->
+      begin
+      try
+	let always_then = ref false in
+	let check_br (b,l) = 
+	  List.iter (fun t -> if depends t then raise BadDep) l
+	in
+	let l0' = ref [] in
+	List.iter (fun (bl,def_list,t,p1) ->
+	  (* Variables defined in conditions of find never have array accesses,
+	     so we need record that the variables in bl are defined,
+	     and we can remove the "find" if it always give the same result,
+	     without checking that the variables in bl are not used. *)
+	  if not (List.for_all defined_br def_list) then
+	    local_changed := true
+	  else
+	    begin
+	      List.iter check_br def_list;
+	      let bl' = List.map snd bl in
+	    (* Compute the probability that the test fails.*)
+              match almost_indep_fc (bl' @ cur_array) t with
+		BothDepB -> raise BadDep
+	      | OnlyThen ->
+		  if def_list == [] then always_then := true;
+		  begin
+		    try
+		      let p1' = to_term (almost_indep_fc cur_array p1) in
+		      let t' = Terms.make_true() in
+		      let def_list' = 
+			if not (Terms.equal_terms t t' && Terms.equal_terms p1 p1') then
+			  let already_defined = Facts.get_def_vars_at t0.t_facts in
+			  let newly_defined = Facts.def_vars_from_defined (Facts.get_node t0.t_facts) def_list in
+			  Facts.update_def_list_term already_defined newly_defined bl def_list t' p1'
+			else
+			  def_list
+		      in
+		      l0' := (bl, def_list', t', p1') :: (!l0')
+		    with Contradiction ->
+		      (* The variables in the defined condition can never be defined,
+			 or the process p1 is unreachable;
+			 we can remove the branch *)
+		      local_changed := true
+		  end				 
+	      | BothIndepB t' ->
+		  begin
+		    try 
+		      let p1' = to_term (almost_indep_fc cur_array p1) in
+		      let def_list' = 
+			if not (Terms.equal_terms t t' && Terms.equal_terms p1 p1') then
+			  let already_defined = Facts.get_def_vars_at t0.t_facts in
+			  let newly_defined = Facts.def_vars_from_defined (Facts.get_node t0.t_facts) def_list in
+			  Facts.update_def_list_term already_defined newly_defined bl def_list t' p1'
+			else
+			  def_list
+		      in
+		      l0' := (bl, def_list', t', p1') :: (!l0')
+		    with Contradiction -> 
+		      (* The variables in the defined condition can never be defined,
+			 or the process p1 is unreachable;
+			 we can remove the branch *)
+		      local_changed := true
+		  end
+	      | OnlyElse | Unreachable -> 
+		  local_changed := true
+	  end) l0;
+	if !always_then then
+	  begin
+	    if List.for_all (fun (_,_,_,p1') -> Terms.is_true p1') (!l0') then
+	      begin
+		local_changed := true;
+		OnlyThen
+	      end
+	    else if List.for_all (fun (_,_,_,p1') -> Terms.is_false p1') (!l0') then
+	      begin
+		local_changed := true;
+		OnlyElse
+	      end
+	    else
+	      begin
+		if not (Terms.is_false p2) then local_changed := true;
+		BothIndepB (Terms.build_term2 t0 (FindE(List.rev (!l0'), Terms.make_false(), find_info)))
+	      end
+	  end
+	else
+	  match almost_indep_fc cur_array p2 with
+	    BothIndepB p2' -> BothIndepB (Terms.build_term2 t0 (FindE(List.rev (!l0'), p2', find_info)))
+	  | OnlyThen ->
+	      if List.for_all (fun (_,_,_,p1') -> Terms.is_true p1') (!l0') then
+		begin
+		  local_changed := true;
+		  OnlyThen
+		end
+	      else
+		BothIndepB (Terms.build_term2 t0 (FindE(List.rev (!l0'), Terms.make_true(), find_info)))
+	  | OnlyElse | Unreachable ->
+	      if List.for_all (fun (_,_,_,p1') -> Terms.is_false p1') (!l0') then
+		begin
+		  local_changed := true;
+		  OnlyElse
+		end
+	      else
+		BothIndepB (Terms.build_term2 t0 (FindE(List.rev (!l0'), Terms.make_false(), find_info)))
+	  | BothDepB -> BothDepB
+      with BadDep -> BothDepB
+      end
+  | TestE(t',p1,p2) ->
+      begin
+	match almost_indep_test cur_array t' with
+	  BothDepB -> 
+	    let p1' = almost_indep_fc cur_array p1 in
+	    let p2' = almost_indep_fc cur_array p2 in
+	    begin
+	      match p1', p2' with
+		Unreachable, _ ->
+		  local_changed := true;
+		  p2'
+	      | _, Unreachable ->
+		  local_changed := true;
+		  p1'
+	      | OnlyThen, OnlyThen ->
+		  local_changed := true;
+		  OnlyThen
+	      | OnlyElse, OnlyElse ->
+		  local_changed := true;
+		  OnlyElse
+              | BothIndepB t1', BothIndepB t2'  ->
+		  begin
+		    try
+                      let true_facts = Facts.get_facts_at t0.t_facts in
+		      let simp_facts = Facts.simplif_add_list (dependency_collision cur_array) ([],[],[]) true_facts in
+                      if Terms.simp_equal_terms simp_facts true t1' t2' then
+			BothIndepB t1' 
+                      else
+			BothDepB
+		    with Contradiction ->
+		      (* The term [t0] is in fact unreachable *)
+		      Unreachable
+		  end
+	      | _ -> BothDepB
+	    end
+	| BothIndepB t'' ->
+	    let p1' = almost_indep_fc cur_array p1 in
+	    let p2' = almost_indep_fc cur_array p2 in
+	    begin
+	      match p1', p2' with
+		Unreachable, _ ->
+		  local_changed := true;
+		  p2'
+	      | _, Unreachable ->
+		  local_changed := true;
+		  p1'		  
+	      |	OnlyThen, OnlyThen ->
+		  local_changed := true;
+		  OnlyThen
+	      | OnlyElse, OnlyElse ->
+		  local_changed := true;
+		  OnlyElse
+	      | BothDepB, _ | _, BothDepB -> BothDepB
+	      | _, _ -> BothIndepB (Terms.build_term2 t0 (TestE(t'', to_term p1', to_term p2')))
+	    end
+	| OnlyThen ->
+	    local_changed := true;
+	    almost_indep_fc cur_array p1
+	| OnlyElse ->
+	    local_changed := true;
+	    almost_indep_fc cur_array p2
+	| Unreachable -> Unreachable
+      end
+  | LetE(pat,t',p1,p2opt) ->
+      begin
+	(* Variables defined in conditions of find never have array accesses,
+	   so we need record that the variables in pat are defined,
+	   and we can remove the "let" if it always give the same result,
+	   without checking that the variables in pat are not used. *)
+	match pat with
+	  PatVar b ->
+	    (* Since [b] has no array accesses, the only definition of
+	       [b] in [p1] is [b = t']. We record that dependency by [set_depend]. *)
+	    let old_dvar_list = !dvar_list in
+	    set_depend b t';
+	    let res = 
+	      match almost_indep_fc cur_array p1 with
+		OnlyThen ->
+		  local_changed := true;
+		  OnlyThen
+	      | OnlyElse ->
+		  local_changed := true;
+		  OnlyElse
+	      | BothDepB -> BothDepB
+	      | BothIndepB p1' -> 
+		  if Terms.refers_to b p1' then
+		    BothIndepB (Terms.build_term2 t0 (LetE(pat,t', p1', None)))
+		  else
+		    BothIndepB p1'
+	      | Unreachable -> Unreachable
+	    in
+	    dvar_list := old_dvar_list;
+	    res
+	| _ ->
+	    let p2 = 
+	      match p2opt with
+		None -> Parsing_helper.internal_error "else branch should be present in let when the pattern is not a variable"
+	      | Some p2 -> p2
+	    in
+	    try
+	      match find_compos_list t' with
+		Some (st, charac_type,t',charac_args_opt) ->
+		  if check_assign1 cur_array (t', Terms.term_from_pat pat, charac_type) st pat then
+		    raise BothDep
+		  else
+		    begin
+		      (* [t'] characterizes [b0], the pattern is independent of [b0]
+			 => only the else branch can be taken up to negligible probability *)
+		      local_changed := true;
+		      almost_indep_fc cur_array p2
+		    end
+	      | None ->
+		  if depends t' then
+		    raise BothDep
+		  else
+		    let tmp_bad_dep = ref false in
+		    match check_assign2 tmp_bad_dep pat with
+		      Some(charac_type, t1) ->
+                        (* [t'] independent of [b0], the pattern characterizes [b0]
+			   => only the else branch can be taken up to negligible probability *)
+		        (* add probability *)
+			add_collisions_for_current_check_dependency (cur_array, [], t0.t_facts) (t1, t', charac_type);
+			local_changed := true;
+			almost_indep_fc cur_array p2
+		    | None ->
+			begin
+			  if (!tmp_bad_dep) then raise BothDep;
+		          (* Both branches may be taken, and the test is independent of b0 *)
+			  let p1' = almost_indep_fc cur_array p1 in
+			  let p2' = almost_indep_fc cur_array p2 in
+			  match p1', p2' with
+			    Unreachable, _ ->
+			      local_changed := true;
+			      p2'
+			  | _, Unreachable ->
+			      local_changed := true;
+			      p1'
+			  | OnlyThen, OnlyThen ->
+			      local_changed := true;
+			      OnlyThen
+			  | OnlyElse, OnlyElse ->
+			      local_changed := true;
+			      OnlyElse
+			  | BothDepB, _ | _, BothDepB -> BothDepB
+			  | _, _ -> BothIndepB (Terms.build_term2 t0 (LetE(pat,t', to_term p1', Some (to_term p2'))))
+			end
+	    with BothDep ->
+	      (* Both branches may be taken, and the choice may depend on [b0]
+		 Dependency analysis can succeed only if both branches of the let
+		 yield the same result. *)
+	      let old_dvar_list = !dvar_list in
+	      (* Take into account that the variables in [pat] may depend on [b0],
+		 in an unspecified way *)
+	      let vars = Terms.vars_from_pat [] pat in
+	      dvar_list := 
+		 (List.map (fun b -> (b, (Any, (ref [], ref None, ref None)))) vars) @
+		 (List.filter (fun (b',_) -> not (List.memq b' vars)) (!dvar_list));
+	      let p1' = almost_indep_fc cur_array p1 in
+	      dvar_list := old_dvar_list;
+	      let p2' = almost_indep_fc cur_array p2 in
+	      begin
+		match p1', p2' with
+		  Unreachable, _ ->
+		    local_changed := true;
+		    p2'
+		| _, Unreachable ->
+		    local_changed := true;
+		    p1'
+		| OnlyThen, OnlyThen ->
+		    local_changed := true;
+		    OnlyThen
+		| OnlyElse, OnlyElse ->
+		    local_changed := true;
+		    OnlyElse
+		| BothIndepB t1', BothIndepB t2'  ->
+		    begin
+		      try 
+			let true_facts = Facts.get_facts_at t0.t_facts in
+			let simp_facts = Facts.simplif_add_list (dependency_collision cur_array) ([],[],[]) true_facts in
+			if Terms.simp_equal_terms simp_facts true t1' t2' then
+			  BothIndepB t2' 
+			else
+			  BothDepB
+		      with Contradiction ->
+			(* The term [t0] is in fact unreachable *)
+			Unreachable
+		    end
+		| _ -> BothDepB
+	      end
+      end
+  | _ -> almost_indep_test cur_array t0
+
+(* Add a display of the explanation of why the dependency analysis fails,
+   for [almost_indep_fc] and [almost_indep_test]. *)
+	
+let almost_indep_fc cur_array t =
+  let res = almost_indep_fc cur_array t in
+  if res = BothDepB then
+    begin
+      print_string ("At " ^ (string_of_int t.t_occ) ^ ", the term ");
+      Display.display_term t;
+      print_string (" depends on " ^ (Display.binder_to_string (!main_var)) ^ "\n")
+    end;
+  res
+
+let almost_indep_test cur_array t =
+  let res = almost_indep_test cur_array t in
+  if res = BothDepB then
+    begin
+      print_string ("At " ^ (string_of_int t.t_occ) ^ ", the term ");
+      Display.display_term t;
+      print_string (" depends on " ^ (Display.binder_to_string (!main_var)) ^ "\n")
+    end;
+  res
 
 (* [check_depend_process cur_array p] performs the dependency analysis 
    by scanning the process [p]. 
@@ -893,8 +1337,7 @@ let rec check_depend_process cur_array p' =
 	  end
 	    ) tl;
       let tmp_bad_dep = ref false in
-      let to_advise = ref [] in
-      match check_assign2 to_advise tmp_bad_dep pat with
+      match check_assign2 tmp_bad_dep pat with
 	Some(charac_type, t1) -> 
 	  (* The pattern matching of this input always fails *)
           (* Create a dummy variable for the input message *)
@@ -910,13 +1353,13 @@ let rec check_depend_process cur_array p' =
 	begin
 	  if (!tmp_bad_dep) then
 	    begin
-	      if (!to_advise) != [] then
-		add_advice (!to_advise);
 	      print_string ("At " ^ (string_of_int p'.i_occ) ^ ", pattern of input ");
 	      Display.display_pattern pat;
 	      print_string (" depends on " ^ (Display.binder_to_string (!main_var)) ^ " but does not characterize a part of it.\n");
 	      raise BadDep
 	    end;
+	  let vars = Terms.vars_from_pat [] pat in
+	  List.iter add_indep vars;
 	  add_defined_pat pat;
 	  Terms.iproc_from_desc (Input((c,tl), pat, check_depend_oprocess cur_array p))
 	end
@@ -944,6 +1387,9 @@ and check_depend_oprocess cur_array p =
 	| OnlyElse -> 
 	    local_changed := true;
 	    check_depend_oprocess cur_array p2
+	| Unreachable -> 
+	    local_changed := true;
+	    Terms.oproc_from_desc Yield
       end
   | Find(l0,p2,find_info) ->
       let always_then = ref false in
@@ -966,7 +1412,7 @@ and check_depend_oprocess cur_array p =
 	    List.iter check_br def_list;
 	    let bl' = List.map snd bl in
 	    (* Compute the probability that the test fails.*)
-            match almost_indep_test (bl' @ cur_array) t with
+            match almost_indep_fc (bl' @ cur_array) t with
 	      BothDepB -> raise BadDep
 	    | OnlyThen ->
 		List.iter (fun (b,_) -> add_defined b) bl;
@@ -974,34 +1420,51 @@ and check_depend_oprocess cur_array p =
 		let defined_condition_update_needed_tmp = !defined_condition_update_needed in
 		defined_condition_update_needed := false;
 		let p1' = check_depend_oprocess cur_array p1 in
-		let def_list' = 
-		  if !defined_condition_update_needed then
-		    let already_defined = Facts.get_def_vars_at p.p_facts in
-		    let newly_defined = Facts.def_vars_from_defined (Facts.get_node p.p_facts) def_list in
-		    Facts.update_def_list_process already_defined newly_defined bl def_list t p1'
-		  else
-		    def_list
-		in
-		defined_condition_update_needed := 
-		   defined_condition_update_needed_tmp || (!defined_condition_update_needed);
-		l0' := (bl, def_list', t, p1') :: (!l0')
+		let t' = Terms.make_true() in
+		begin
+		  try 
+		    let def_list' = 
+		      if !defined_condition_update_needed then
+			let already_defined = Facts.get_def_vars_at p.p_facts in
+			let newly_defined = Facts.def_vars_from_defined (Facts.get_node p.p_facts) def_list in
+			Facts.update_def_list_process already_defined newly_defined bl def_list t' p1'
+		      else
+			def_list
+		    in
+		    defined_condition_update_needed := 
+		       defined_condition_update_needed_tmp || (!defined_condition_update_needed);
+		    l0' := (bl, def_list', t', p1') :: (!l0')
+		  with Contradiction ->
+		    (* The variables in the defined condition can never be defined,
+                       we can remove the branch *)
+		    local_changed := true;
+		    defined_condition_update_needed := defined_condition_update_needed_tmp
+		end
 	    | BothIndepB t' ->
 		List.iter (fun (b,_) -> add_defined b) bl;
 		let defined_condition_update_needed_tmp = !defined_condition_update_needed in
 		defined_condition_update_needed := not (Terms.equal_terms t t');
 		let p1' = check_depend_oprocess cur_array p1 in
-		let def_list' = 
-		  if !defined_condition_update_needed then
-		    let already_defined = Facts.get_def_vars_at p.p_facts in
-		    let newly_defined = Facts.def_vars_from_defined (Facts.get_node p.p_facts) def_list in
-		    Facts.update_def_list_process already_defined newly_defined bl def_list t' p1'
-		  else
-		    def_list
-		in
-		defined_condition_update_needed := 
-		   defined_condition_update_needed_tmp || (!defined_condition_update_needed);
-		l0' := (bl, def_list', t', p1') :: (!l0')
-	    | OnlyElse -> 
+		begin
+		  try 
+		    let def_list' = 
+		      if !defined_condition_update_needed then
+			let already_defined = Facts.get_def_vars_at p.p_facts in
+			let newly_defined = Facts.def_vars_from_defined (Facts.get_node p.p_facts) def_list in
+			Facts.update_def_list_process already_defined newly_defined bl def_list t' p1'
+		      else
+			def_list
+		    in
+		    defined_condition_update_needed := 
+		       defined_condition_update_needed_tmp || (!defined_condition_update_needed);
+		    l0' := (bl, def_list', t', p1') :: (!l0')
+		  with Contradiction ->
+		    (* The variables in the defined condition can never be defined,
+                       we can remove the branch *)
+		    local_changed := true;
+		    defined_condition_update_needed := defined_condition_update_needed_tmp
+		end
+	    | OnlyElse | Unreachable -> 
 		local_changed := true
 	  end) l0;
       if !always_then then
@@ -1028,63 +1491,42 @@ and check_depend_oprocess cur_array p =
 	  raise BadDep
 	end;
       Terms.oproc_from_desc (Output((c,tl),t2, check_depend_process cur_array p))
+  | Let(PatVar b, t, p1, _) ->
+      add_depend b t;
+      add_defined b;
+      let p1' = check_depend_oprocess cur_array p1 in
+      Terms.oproc_from_desc (Let(PatVar b, t, p1', Terms.oproc_from_desc Yield))
   | Let(pat,t,p1,p2) ->
       begin
 	match find_compos_list t with
 	  Some (st, charac_type,t',charac_args_opt) ->
-	    begin
-	      let vars_to_add = ref [] in
-	      let tmp_bad_dep = ref false in
-	      let collect_bargs = ref [] in
-	      let depend_args_opt =
-		try
-		  get_dep_indices collect_bargs t;
-		  match !collect_bargs with
-		    [l] -> Some l (* [t] depends only on [b0[l]] *)
-		  | [] -> Parsing_helper.internal_error "What?!? t characterizes b0 but it does not depend on b0!"
-		  | _ -> None
-		with Depends -> None
-	      in
-	      if check_assign1 cur_array (t', Terms.term_from_pat pat, charac_type) charac_args_opt depend_args_opt vars_to_add tmp_bad_dep st pat then
-		begin
-		  if (!tmp_bad_dep) || (match pat with PatVar _ -> false | _ -> true) then 
-		    begin
-		      print_string ("At " ^ (string_of_int p.p_occ) ^ ", the assignment ");
-		      Display.display_pattern pat;
-		      print_string " = ";
-		      Display.display_term t;
-		      print_string " introduces a bad dependency:\nthe term ";
-		      Display.display_term t;
-		      print_string (" characterizes a part of " ^ (Display.binder_to_string (!main_var)) ^ " but the pattern ");
-		      Display.display_pattern pat;
-		      print_string " is not a variable and does not allow me to show that the assignment always fails.\n"; 
-		      raise BadDep
-		    end;
-		  List.iter (function ((b,_) as b_st) ->
-                    (*print_string "Adding ";
-                      Display.display_binder b0;
-                      print_newline();*)
-		    if not (Terms.is_assign b) then
-		      begin
-			print_string ("At " ^ (string_of_int p.p_occ) ^ ", the variable " ^ (Display.binder_to_string b) ^ " depends on "  ^ (Display.binder_to_string (!main_var)) ^ " but is also defined by constructs other than assignments.\n");
-			raise BadDep
-		      end;
-		    dvar_list_changed := true;
-		    dvar_list := b_st :: (!dvar_list)) (!vars_to_add);
-		  add_defined_pat pat;
-		  let p1' = check_depend_oprocess cur_array p1 in
-		  let p2' = check_depend_oprocess cur_array p2 in
-		  Terms.oproc_from_desc (Let(pat, t, p1', p2'))
-		end
-	      else
-		begin
-		  local_changed := true;
-		  check_depend_oprocess cur_array p2
-		end
-	    end
+	    if check_assign1 cur_array (t', Terms.term_from_pat pat, charac_type) st pat then
+	      begin
+		(* Both branches may be taken, and the choice may depend on [b0]
+		   => dependency analysis fails *)
+		print_string ("At " ^ (string_of_int p.p_occ) ^ ", the assignment ");
+		Display.display_pattern pat;
+		print_string " = ";
+		Display.display_term t;
+		print_string " introduces a bad dependency:\nthe term ";
+		Display.display_term t;
+		print_string (" characterizes a part of " ^ (Display.binder_to_string (!main_var)) ^ " but the pattern ");
+		Display.display_pattern pat;
+		print_string " is not a variable and does not allow me to show that the assignment always fails.\n"; 
+		raise BadDep
+	      end
+	    else
+	      begin
+                (* [t] characterizes [b0], the pattern is independent of [b0]
+		   => only the else branch can be taken up to negligible probability *)
+		local_changed := true;
+		check_depend_oprocess cur_array p2
+	      end
 	| None ->
 	    if depends t then
 	      begin
+		(* Both branches may be taken, and the choice may depend on [b0]
+		   => dependency analysis fails *)
 		print_string ("At " ^ (string_of_int t.t_occ) ^ ", the term ");
 		Display.display_term t;
 		print_string (" depends on " ^ (Display.binder_to_string (!main_var)) ^ " but does not characterize a part of it.\n");
@@ -1092,10 +1534,11 @@ and check_depend_oprocess cur_array p =
 	      end
 	    else
 	      begin
-		let to_advise = ref [] in
 		let tmp_bad_dep = ref false in
-		match check_assign2 to_advise tmp_bad_dep pat with
+		match check_assign2 tmp_bad_dep pat with
 		  Some(charac_type, t1) ->
+                    (* [t] independent of [b0], the pattern characterizes [b0]
+		       => only the else branch can be taken up to negligible probability *)
 		    (* add probability *)
 		    add_collisions_for_current_check_dependency (cur_array, [], p.p_facts) (t1, t, charac_type);
 		    local_changed := true;
@@ -1104,13 +1547,16 @@ and check_depend_oprocess cur_array p =
 		  begin
 		    if (!tmp_bad_dep) then
 		      begin
-			if (!to_advise) != [] then
-			  add_advice (!to_advise);
+		        (* Both branches may be taken, and the choice may depend on [b0]
+			   => dependency analysis fails *)
 			print_string ("At " ^ (string_of_int p.p_occ) ^ ", pattern of assignment ");
 			Display.display_pattern pat;
 			print_string (" depends on " ^ (Display.binder_to_string (!main_var)) ^ " but does not characterize a part of it.\n");
 			raise BadDep
 		      end;
+		    (* Both branches may be taken, but the test is independent of b0 *)
+		    let vars = Terms.vars_from_pat [] pat in
+		    List.iter add_indep vars;
 		    add_defined_pat pat;
 		    let p1' = check_depend_oprocess cur_array p1 in
 		    let p2' = check_depend_oprocess cur_array p2 in

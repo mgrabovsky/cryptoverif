@@ -728,7 +728,7 @@ and insert_inso count occ ins env cur_array p =
     | Find(l0,p3,find_info) ->
 	let (p3', def3) = insert_inso count occ ins env cur_array p3 in
 	let accu = ref def3 in
-	let l0' = List.map (fun (bl, def_list, t, p) ->
+	let l0' = List.fold_right (fun (bl, def_list, t, p) laccu ->
 	  let vars = List.map fst bl in
 	  let env' = List.fold_left (fun env1 b -> StringMap.add (Display.binder_to_string b) (EVar b) env1) env vars in	
 	  (* I will check that the newly added definitions do not concern 
@@ -737,18 +737,23 @@ and insert_inso count occ ins env cur_array p =
 	  let count_before = !count in
 	  let (p', def) = insert_inso count occ ins env' cur_array p in
 	  let count_after = !count in
-	  let def_list' = 
-	    if (count_before == 0) && (count_after == 1) then
-	      let already_defined = Facts.get_def_vars_at p.p_facts in
-	      let newly_defined = Facts.def_vars_from_defined (Facts.get_node p.p_facts) def_list in
-	      Facts.update_def_list_process already_defined newly_defined bl def_list t p'
-	    else
-	      def_list
-	  in
-	  check_noninter def vars;
-	  accu := Terms.unionq (vars @ def) (!accu);
-	  (bl, def_list', t, p')
-	  ) l0 
+	  try
+	    let def_list' = 
+	      if (count_before == 0) && (count_after == 1) then
+		let already_defined = Facts.get_def_vars_at p.p_facts in
+		let newly_defined = Facts.def_vars_from_defined (Facts.get_node p.p_facts) def_list in
+		Facts.update_def_list_process already_defined newly_defined bl def_list t p'
+	      else
+		def_list
+	    in
+	    check_noninter def vars;
+	    accu := Terms.unionq (vars @ def) (!accu);
+	    (bl, def_list', t, p') :: laccu
+	  with Contradiction ->
+	    (* The variables in the defined condition cannot be defined,
+	       we can just remove the branch *)
+	    laccu
+	  ) l0 []
 	in
 	(Find(l0',p3',find_info), !accu)
     | Output((c,tl),t,p) ->
@@ -778,9 +783,7 @@ let insert_instruct occ ext_o s ext_s g =
 	Oparser.instruct Olexer.token lexbuf
     with
       Parsing.Parse_error -> raise (Error("Syntax error", combine_extent ext_s (extent lexbuf)))
-    | Parsing_helper.IllegalCharacter -> raise (Error("Illegal character", combine_extent ext_s (extent lexbuf)))
-    | Parsing_helper.IllegalEscape -> raise (Error("Illegal escape", combine_extent ext_s (extent lexbuf)))
-    | Parsing_helper.UnterminatedString -> raise (Error("Unterminated string", combine_extent ext_s (extent lexbuf)))
+    | Error(s,ext) -> raise (Error(s, combine_extent ext_s ext))
 
   in
   Terms.array_ref_process g.proc;
@@ -913,7 +916,7 @@ and replace_tfind_cond count env cur_array t =
       Terms.build_term2 t (LetE(pat',t1',t2',topt'))
   | FindE(l0,t3, find_info) ->
       let t3' = replace_tfind_cond count env cur_array t3 in
-      let l0' = List.map (fun (bl, def_list, tc, p) ->
+      let l0' = List.fold_right (fun (bl, def_list, tc, p) laccu ->
 	let vars = List.map fst bl in
 	let repl_indices = List.map snd bl in
 
@@ -926,16 +929,21 @@ and replace_tfind_cond count env cur_array t =
 	let tc' = replace_tfind_cond count env_tc cur_array tc in
 	let count_after = !count in
 	(* Update def_list if needed *)
-	let def_list' = 
-	  match count_before, count_after with
-	    RepToDo _, RepDone _ -> 
-	      let already_defined = Facts.get_def_vars_at t.t_facts in
-	      let newly_defined = Facts.def_vars_from_defined (Facts.get_node t.t_facts) def_list in
-	      Facts.update_def_list_term already_defined newly_defined bl def_list tc' p'
-	  | _ -> def_list
-	in
-	(bl, def_list', tc', p')
-	  ) l0 
+	try 
+	  let def_list' = 
+	    match count_before, count_after with
+	      RepToDo _, RepDone _ -> 
+		let already_defined = Facts.get_def_vars_at t.t_facts in
+		let newly_defined = Facts.def_vars_from_defined (Facts.get_node t.t_facts) def_list in
+		Facts.update_def_list_term already_defined newly_defined bl def_list tc' p'
+	    | _ -> def_list
+	  in
+	  (bl, def_list', tc', p') :: laccu
+	with Contradiction ->
+	  (* The variables in the defined condition cannot be defined,
+             I can just remove the branch *)
+	  laccu
+	  ) l0 []
       in
       Terms.build_term2 t (FindE(l0',t3',find_info))
   | Var _ | FunApp _ | ReplIndex _ -> replace_tt count env [] cur_array t 
@@ -986,7 +994,7 @@ and replace_to count env cur_array p =
 	Let(pat',t',p1',p2')
     | Find(l0,p3,find_info) ->
 	let p3' = replace_to count env cur_array p3 in
-	let l0' = List.map (fun (bl, def_list, t, p1) ->
+	let l0' = List.fold_right (fun (bl, def_list, t, p1) laccu ->
 	  let vars = List.map fst bl in
 	  let repl_indices = List.map snd bl in
 
@@ -999,16 +1007,21 @@ and replace_to count env cur_array p =
 	  let t' = replace_tfind_cond count env_t cur_array t in
 	  let count_after = !count in
 	  (* Update def_list if needed *)
-	  let def_list' = 
-	    match count_before, count_after with
-	      RepToDo _, RepDone _ ->
-		let already_defined = Facts.get_def_vars_at p.p_facts in
-		let newly_defined = Facts.def_vars_from_defined (Facts.get_node p.p_facts) def_list in
-		Facts.update_def_list_process already_defined newly_defined bl def_list t' p1'
-	    | _ -> def_list
-	  in
-	  (bl, def_list', t', p1')
-	  ) l0 
+	  try
+	    let def_list' = 
+	      match count_before, count_after with
+		RepToDo _, RepDone _ ->
+		  let already_defined = Facts.get_def_vars_at p.p_facts in
+		  let newly_defined = Facts.def_vars_from_defined (Facts.get_node p.p_facts) def_list in
+		  Facts.update_def_list_process already_defined newly_defined bl def_list t' p1'
+	      | _ -> def_list
+	    in
+	    (bl, def_list', t', p1') :: laccu
+	  with Contradiction ->
+	    (* The variables in the defined condition cannot be defined,
+	       I can just remove the branch *)
+	    laccu
+	  ) l0 []
 	in
 	Find(l0',p3',find_info)
     | Output((c,tl),t,p) ->
@@ -1033,9 +1046,7 @@ let replace_term occ ext_o s ext_s g =
 	Oparser.term Olexer.token lexbuf
     with
       Parsing.Parse_error -> raise (Error("Syntax error", combine_extent ext_s (extent lexbuf)))
-    | Parsing_helper.IllegalCharacter -> raise (Error("Illegal character", combine_extent ext_s (extent lexbuf)))
-    | Parsing_helper.IllegalEscape -> raise (Error("Illegal escape", combine_extent ext_s (extent lexbuf)))
-    | Parsing_helper.UnterminatedString -> raise (Error("Unterminated string", combine_extent ext_s (extent lexbuf)))
+    | Error(s,ext) -> raise (Error(s, combine_extent ext_s ext))
   in
   Terms.array_ref_process g.proc;
   Terms.build_def_process None g.proc;
