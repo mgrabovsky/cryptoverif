@@ -1,4 +1,4 @@
-default: help
+default: cryptoverif
 
 help:
 	@echo 'Available targets:'
